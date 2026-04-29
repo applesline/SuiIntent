@@ -8,6 +8,7 @@ import type { RouteContext } from './status';
  * - GET /api/servers
  * - POST /api/servers
  * - POST /api/servers/pull
+ * - POST /api/servers/import
  * - GET /api/servers/search
  * - GET /api/servers/cached
  * - GET /api/servers/{id}
@@ -32,6 +33,11 @@ export async function handleServerRoutes(ctx: RouteContext): Promise<boolean> {
   // POST /api/servers/pull
   if (path === '/api/servers/pull' && method === 'POST') {
     return handlePullServer(res, body);
+  }
+
+  // POST /api/servers/import
+  if (path === '/api/servers/import' && method === 'POST') {
+    return handleImportConfig(res, body);
   }
 
   // GET /api/servers/search
@@ -89,6 +95,41 @@ export async function handleServerRoutes(ctx: RouteContext): Promise<boolean> {
   }
 
   return false;
+}
+
+async function handleImportConfig(res: http.ServerResponse, body: string): Promise<true> {
+  try {
+    const { config } = JSON.parse(body);
+    if (!config || typeof config !== 'string') {
+      sendJson(res, 400, { error: 'Bad Request', message: 'config is required and must be a JSON string' });
+      return true;
+    }
+
+    const manifests = await getRegistryClient().importConfig(config);
+    
+    sendJson(res, 200, {
+      success: true,
+      message: `Successfully imported ${manifests.length} MCP server(s)`,
+      imported: manifests.map(m => ({
+        name: m.name,
+        version: m.version,
+        description: m.description
+      })),
+      total: manifests.length
+    });
+  } catch (error: any) {
+    if (error instanceof SyntaxError) {
+      sendJson(res, 400, { error: 'Invalid JSON', message: 'Request body must be valid JSON' });
+    } else {
+      sendJson(res, 400, { 
+        success: false, 
+        error: 'Import Failed', 
+        message: error.message,
+        suggestion: 'Please check that the config is valid Claude Desktop format (has "mcpServers" field)'
+      });
+    }
+  }
+  return true;
 }
 
 async function handleStartServer(res: http.ServerResponse, body: string): Promise<true> {

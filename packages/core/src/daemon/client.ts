@@ -40,6 +40,7 @@ export class DaemonClient {
         const options: http.RequestOptions = {
           method,
           headers,
+          agent: false, // Disable proxy and connection pooling for local reliability
         };
 
         const req = http.request(url, options, (res) => {
@@ -103,6 +104,27 @@ export class DaemonClient {
 
   async getServerLogs(pid: number): Promise<ServerLogsResponse> {
     return this.request<ServerLogsResponse>('GET', `/api/servers/${pid}/logs`);
+  }
+
+  /**
+   * Execute natural language query via daemon
+   */
+  async executeNaturalLanguage(query: string, options?: any): Promise<any> {
+    return this.request<any>('POST', '/api/execute/natural-language', { query, options });
+  }
+
+  /**
+   * Parse intent via daemon
+   */
+  async parseIntent(intent: string, context?: any): Promise<any> {
+    return this.request<any>('POST', '/api/execute/parse-intent', { intent, context });
+  }
+
+  /**
+   * Execute pre-parsed steps via daemon
+   */
+  async executeSteps(steps: any[], options?: any): Promise<any> {
+    return this.request<any>('POST', '/api/execute/steps', { steps, options });
   }
 
   async isDaemonRunning(): Promise<boolean> {

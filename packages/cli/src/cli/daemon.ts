@@ -74,7 +74,7 @@ async function startDaemonDetached(host: string, port: string): Promise<void> {
   const child = spawn(process.execPath, [scriptPath, 'daemon', 'start', '--host', host, '--port', port], {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ORCHAPP_DAEMON: 'true' }
+    env: { ...process.env, INTORCH_DAEMON: 'true' }
   });
   
   let errorOutput = '';

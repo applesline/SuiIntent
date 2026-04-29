@@ -233,6 +233,39 @@ export class DaemonServer {
         }
     }
     
+    if (path === '/api/servers/import' && method === 'POST') {
+        try {
+            const { config } = JSON.parse(body);
+            if (!config || typeof config !== 'string') {
+                return this.sendJson(res, 400, { error: 'Bad Request', message: 'config is required and must be a JSON string' });
+            }
+
+            const manifests = await getRegistryClient().importConfig(config);
+            
+            return this.sendJson(res, 200, {
+                success: true,
+                message: `Successfully imported ${manifests.length} MCP server(s)`,
+                imported: manifests.map(m => ({
+                    name: m.name,
+                    version: m.version,
+                    description: m.description
+                })),
+                total: manifests.length
+            });
+        } catch (error: any) {
+            if (error instanceof SyntaxError) {
+                return this.sendJson(res, 400, { error: 'Invalid JSON', message: 'Request body must be valid JSON' });
+            } else {
+                return this.sendJson(res, 400, { 
+                    success: false, 
+                    error: 'Import Failed', 
+                    message: error.message,
+                    suggestion: 'Please check that the config is valid Claude Desktop format (has "mcpServers" field)'
+                });
+            }
+        }
+    }
+    
     if (path === '/api/servers/pull' && method === 'POST') {
         try {
             const { serverNameOrUrl } = JSON.parse(body);
@@ -1083,6 +1116,10 @@ export class DaemonServer {
 
   async start() {
     ensureInTorchDir();
+    
+    // Set environment variable to identify this as a daemon process
+    process.env.INTORCH_DAEMON = 'true';
+    
     await fs.writeFile(this.config.pidFile, process.pid.toString());
     
     // Generate daemon auth token if not exists

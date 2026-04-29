@@ -1,6 +1,6 @@
 import { logger } from "../core/logger";
 import { Manifest, RegistrySource, ServiceInfo, SearchOptions, SearchResult } from './types';
-import { createRegistrySource } from './sources';
+import { createRegistrySource, parseClaudeDesktopConfig } from './sources';
 import { ManifestCache } from './cache';
 import { getRegistryConfig } from '../utils/config';
 
@@ -12,11 +12,53 @@ export class RegistryClient {
     this.cache = new ManifestCache();
     this.sources = new Map();
     
-    // Initialize default sources
-    this.sources.set('official', createRegistrySource('official'));
+    // Initialize default sources (official source removed, use github/gitee directly)
     this.sources.set('github', createRegistrySource('github'));
     this.sources.set('gitee', createRegistrySource('gitee'));
     this.sources.set('direct', createRegistrySource('direct'));
+  }
+
+  /**
+   * Import MCP config (Claude Desktop format) and cache all manifests
+   * Returns the list of imported manifests
+   */
+  async importConfig(configJson: string): Promise<Manifest[]> {
+    const manifests = parseClaudeDesktopConfig(configJson);
+    
+    for (const manifest of manifests) {
+      const cacheKey = this.generateCacheKey(manifest.name);
+      await this.cache.set(cacheKey, manifest);
+      logger.info(`[RegistryClient] Imported and cached manifest: ${manifest.name}`);
+      
+      // Auto-register env values as secrets if they exist
+      if (manifest.runtime?.env && manifest.runtime.env.length > 0) {
+        try {
+          const { getSecretManager } = await import('../secret/manager');
+          const secretManager = getSecretManager();
+          
+          // Parse the original config to get env values (runtime.env only has keys)
+          const data = JSON.parse(configJson);
+          const servers = data.mcpServers || {};
+          const entry = servers[manifest.name];
+          
+          if (entry && entry.env && typeof entry.env === 'object') {
+            for (const [key, value] of Object.entries(entry.env)) {
+              if (value && typeof value === 'string') {
+                const existingSecret = await secretManager.get(key);
+                if (!existingSecret) {
+                  await secretManager.set(key, value);
+                  logger.info(`[RegistryClient] Auto-registered secret: ${key} from imported config`);
+                }
+              }
+            }
+          }
+        } catch (secretError) {
+          logger.warn(`[RegistryClient] Failed to auto-register secrets for ${manifest.name}:`, secretError);
+        }
+      }
+    }
+    
+    return manifests;
   }
 
   async fetchManifest(serverNameOrUrl: string): Promise<Manifest> {

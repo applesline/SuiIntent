@@ -3,200 +3,75 @@ import axios from 'axios';
 import { Manifest, RegistrySource, SearchOptions, SearchResult, ServiceInfo } from './types';
 import { PROGRAM_NAME } from '../utils/constants';
 
-export class OfficialRegistrySource implements RegistrySource {
-  name = 'official';
+/**
+ * Infer runtime type from command
+ */
+function inferRuntimeType(command: string): string {
+  const cmd = command.toLowerCase().trim();
+  if (cmd.includes('node') || cmd.includes('bun')) return 'nodejs';
+  if (cmd.includes('python') || cmd.includes('python3')) return 'python';
+  if (cmd.includes('go') || cmd.includes('golang')) return 'go';
+  if (cmd.includes('java') || cmd.includes('javac')) return 'java';
+  if (cmd.includes('rust') || cmd.includes('cargo')) return 'rust';
+  if (cmd.includes('docker') || cmd.includes('podman')) return 'docker';
+  return 'process';
+}
 
-  async fetchManifest(serverName: string): Promise<Manifest> {
-    // Official registry should try both GitHub and Gitee hubs
-    const githubHubOwner = process.env.GITHUB_HUB_OWNER || 'MCPilotX';
-    const githubHubRepo = process.env.GITHUB_HUB_REPO || 'mcp-server-hub';
-    const githubHubBranch = process.env.GITHUB_HUB_BRANCH || 'main';
-    
-    const giteeHubOwner = process.env.GITEE_HUB_OWNER || 'MCPilotX';
-    const giteeHubRepo = process.env.GITEE_HUB_REPO || 'mcp-server-hub';
-    const giteeHubBranch = process.env.GITEE_HUB_BRANCH || 'main';
-    
-    // Remove 'mcp/' prefix if present (for backward compatibility)
-    const cleanServerName = serverName.startsWith('mcp/') ? serverName.substring(4) : serverName;
-    
-    // Try multiple possible paths
-    const possiblePaths = [
-      cleanServerName,  // e.g., "12306-mcp"
-      `${cleanServerName}/mcp.json`,  // e.g., "12306-mcp/mcp.json"
-      cleanServerName.includes('/') ? cleanServerName : `github/${cleanServerName}`,  // e.g., "github/12306-mcp"
-    ];
-    
-    // Try GitHub with all possible paths
-    for (const path of possiblePaths) {
-      try {
-        const githubUrl = `https://raw.githubusercontent.com/${githubHubOwner}/${githubHubRepo}/${githubHubBranch}/${path}`;
-        if (!path.endsWith('.json')) {
-          // If path doesn't end with .json, assume it's a directory and add /mcp.json
-          const finalUrl = `${githubUrl}/mcp.json`;
-          logger.info(`Trying GitHub Hub URL: ${finalUrl}`);
-          const response = await axios.get(finalUrl, { timeout: 10000 });
-          return response.data;
-        } else {
-          logger.info(`Trying GitHub Hub URL: ${githubUrl}`);
-          const response = await axios.get(githubUrl, { timeout: 10000 });
-          return response.data;
-        }
-      } catch (githubError) {
-        continue; // Try next path
-      }
-    }
-    
-    // If GitHub fails, try Gitee with all possible paths
-    for (const path of possiblePaths) {
-      try {
-        const giteeUrl = `https://gitee.com/${giteeHubOwner}/${giteeHubRepo}/raw/${giteeHubBranch}/${path}`;
-        if (!path.endsWith('.json')) {
-          // If path doesn't end with .json, assume it's a directory and add /mcp.json
-          const finalUrl = `${giteeUrl}/mcp.json`;
-          logger.info(`Trying Gitee Hub URL: ${finalUrl}`);
-          const response = await axios.get(finalUrl, { timeout: 10000 });
-          return response.data;
-        } else {
-          logger.info(`Trying Gitee Hub URL: ${giteeUrl}`);
-          const response = await axios.get(giteeUrl, { timeout: 10000 });
-          return response.data;
-        }
-      } catch (giteeError) {
-        continue; // Try next path
-      }
-    }
-    
-    // Both failed, throw a comprehensive error
-    throw new Error(
-      `MCP Server "${serverName}" not found in official registry.\n` +
-      `Tried GitHub Hub paths:\n` +
-      `  ${possiblePaths.map(p => p.endsWith('.json') ? p : `${p}/mcp.json`).join('\n  ')}\n` +
-      `GitHub Hub: ${githubHubOwner}/${githubHubRepo} (branch: ${githubHubBranch})\n\n` +
-      `Tried Gitee Hub paths:\n` +
-      `  ${possiblePaths.map(p => p.endsWith('.json') ? p : `${p}/mcp.json`).join('\n  ')}\n` +
-      `Gitee Hub: ${giteeHubOwner}/${giteeHubRepo} (branch: ${giteeHubBranch})\n\n` +
-      `Possible reasons:\n` +
-      `1. Module does not exist in the hub\n` +
-      `2. Module may have a different name\n` +
-      `3. Hub configuration may be incorrect\n\n` +
-      `Solutions:\n` +
-      `1. Check available modules in hub: https://github.com/${githubHubOwner}/${githubHubRepo}\n` +
-      `2. Configure custom hub: export GITHUB_HUB_OWNER=<owner> GITHUB_HUB_REPO=<repo>\n` +
-      `3. Try direct GitHub repository: ${PROGRAM_NAME} pull <owner>/<repo>\n` +
-      `4. Try other registry source: ${PROGRAM_NAME} pull github:${cleanServerName}`
-    );
+/**
+ * Check if the given JSON data is a Claude Desktop format (has mcpServers field)
+ */
+function isClaudeDesktopConfig(data: any): boolean {
+  return data && typeof data === 'object' && 'mcpServers' in data;
+}
+
+/**
+ * Convert a single Claude Desktop server entry to an IntentOrch Manifest
+ */
+function claudeDesktopEntryToManifest(serverName: string, entry: any): Manifest {
+  const manifest: Manifest = {
+    name: serverName,
+    version: '1.0.0',
+    description: `Imported from MCP config: ${serverName}`,
+    runtime: {
+      type: inferRuntimeType(entry.command || ''),
+      command: entry.command || '',
+      args: entry.args || [],
+      env: entry.env ? Object.keys(entry.env) : [],
+    },
+    transport: {
+      type: 'stdio',
+    },
+  };
+  return manifest;
+}
+
+/**
+ * Parse a Claude Desktop config and return an array of Manifests
+ */
+export function parseClaudeDesktopConfig(configJson: string): Manifest[] {
+  const data = JSON.parse(configJson);
+  
+  if (!isClaudeDesktopConfig(data)) {
+    throw new Error('Not a valid Claude Desktop config format: missing "mcpServers" field');
   }
-
-  async searchServices(options: SearchOptions): Promise<SearchResult> {
-    const { query = '', limit = 20, offset = 0 } = options;
-    
-    try {
-      // For MVP, we'll return a static list of available services
-      // In a real implementation, this would query the official registry API
-      const allServices: ServiceInfo[] = [
-        {
-          name: 'mcp/12306',
-          description: '12306 train ticket query service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['transport', 'tickets', 'travel', 'china'],
-          lastUpdated: '2024-01-15'
-        },
-        {
-          name: 'mcp/weather',
-          description: 'Weather query service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['weather', 'forecast', 'climate'],
-          lastUpdated: '2024-01-10'
-        },
-        {
-          name: 'mcp/news',
-          description: 'News aggregation service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['news', 'media', 'articles'],
-          lastUpdated: '2024-01-12'
-        },
-        {
-          name: 'mcp/github',
-          description: 'GitHub API integration service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['github', 'code', 'repositories', 'git'],
-          lastUpdated: '2024-01-08'
-        },
-        {
-          name: 'mcp/calculator',
-          description: 'Calculator service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['calculator', 'math', 'tools'],
-          lastUpdated: '2024-01-05'
-        },
-        {
-          name: 'mcp/translator',
-          description: 'Translation service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['translation', 'language', 'translate'],
-          lastUpdated: '2024-01-03'
-        },
-        {
-          name: 'mcp/stock',
-          description: 'Stock information query service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['stock', 'finance', 'market'],
-          lastUpdated: '2024-01-07'
-        },
-        {
-          name: 'mcp/calendar',
-          description: 'Calendar and schedule management service',
-          version: '1.0.0',
-          source: 'official',
-          tags: ['calendar', 'schedule', 'events'],
-          lastUpdated: '2024-01-02'
-        }
-      ];
-
-      // Filter services based on query
-      const filteredServices = allServices.filter(service => {
-        if (!query.trim()) return true;
-        
-        const searchText = query.toLowerCase();
-        return (
-          service.name.toLowerCase().includes(searchText) ||
-          (service.description && service.description.toLowerCase().includes(searchText)) ||
-          (service.tags && service.tags.some(tag => tag.toLowerCase().includes(searchText)))
-        );
-      });
-
-      // Apply pagination
-      const paginatedServices = filteredServices.slice(offset, offset + limit);
-
-      return {
-        services: paginatedServices,
-        total: filteredServices.length,
-        source: this.name,
-        hasMore: offset + limit < filteredServices.length
-      };
-    } catch (error) {
-      logger.error('Error searching official registry:', error);
-      // Return empty result on error
-      return {
-        services: [],
-        total: 0,
-        source: this.name,
-        hasMore: false
-      };
+  
+  const manifests: Manifest[] = [];
+  const servers = data.mcpServers;
+  
+  for (const [serverName, entry] of Object.entries(servers)) {
+    const entryObj = entry as any;
+    if (!entryObj.command) {
+      logger.warn(`Skipping server "${serverName}": missing "command" field`);
+      continue;
     }
+    manifests.push(claudeDesktopEntryToManifest(serverName, entryObj));
   }
-
-  async listAvailableServices(): Promise<ServiceInfo[]> {
-    const result = await this.searchServices({});
-    return result.services;
+  
+  if (manifests.length === 0) {
+    throw new Error('No valid MCP server entries found in the config');
   }
+  
+  return manifests;
 }
 
 export class GitHubRegistrySource implements RegistrySource {
@@ -493,7 +368,7 @@ export class GitHubRegistrySource implements RegistrySource {
             `Suggestions:\n` +
             `1. Check network connection\n` +
             `2. Verify repository exists: https://github.com/${serverName.split(':')[0]}\n` +
-            `3. Try other registry source: ${PROGRAM_NAME} config set registry.default official`
+            `3. Try other registry source`
           );
       }
     } else if (error.request) {
@@ -503,8 +378,7 @@ export class GitHubRegistrySource implements RegistrySource {
         `2. GitHub service may be temporarily unavailable\n\n` +
         `Solutions:\n` +
         `1. Check your internet connection\n` +
-        `2. Try again later\n` +
-        `3. Use other registry source: ${PROGRAM_NAME} config set registry.default official`
+        `2. Try again later`
       );
     } else {
       return new Error(`Error fetching from GitHub: ${error.message}`);
@@ -690,7 +564,7 @@ export class GiteeRegistrySource implements RegistrySource {
               `3. Service may have been deleted or moved\n\n` +
               `Solutions:\n` +
               `1. Check available servers in Gitee Registry: ${baseUrl}\n` +
-              `2. Use other registry source: ${PROGRAM_NAME} config set registry.default github\n` +
+              `2. Use other registry source\n` +
               `3. Use service URL directly (if known)`
             );
           default:
@@ -701,7 +575,7 @@ export class GiteeRegistrySource implements RegistrySource {
               `Status: ${error.response?.status || 'N/A'}\n\n` +
               `Suggestions:\n` +
               `1. Check network connection\n` +
-              `2. Try other registry source: ${PROGRAM_NAME} config set registry.default github\n` +
+              `2. Try other registry source\n` +
               `3. Check if Gitee service is available`
             );
         }
@@ -712,8 +586,8 @@ export class GiteeRegistrySource implements RegistrySource {
           `2. Gitee service may be temporarily unavailable\n\n` +
           `Solutions:\n` +
           `1. Check your internet connection\n` +
-          `2. Try other registry source: ${PROGRAM_NAME} config set registry.default github\n` +
-          `3. Use URL directly: ${PROGRAM_NAME} pull https://raw.githubusercontent.com/.../mcp.json`
+          `2. Try other registry source\n` +
+          `3. Use URL directly`
         );
       } else {
         throw new Error(`Error fetching from Gitee Registry: ${error.message}`);
@@ -893,8 +767,6 @@ export class DirectRegistrySource implements RegistrySource {
 
 export function createRegistrySource(type: string): RegistrySource {
   switch (type) {
-    case 'official':
-      return new OfficialRegistrySource();
     case 'github':
       return new GitHubRegistrySource();
     case 'gitee':

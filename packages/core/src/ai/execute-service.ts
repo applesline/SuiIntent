@@ -127,6 +127,33 @@ export class ExecuteService {
   ): Promise<UnifiedExecutionResult> {
     logger.info(`[ExecuteService] Executing natural language query: "${query.substring(0, 100)}..."`);
     
+    // Check if daemon is running and we should delegate to it
+    // We skip delegation if we're already running inside the daemon to avoid recursion
+    const isDaemonProcess = process.env.INTORCH_DAEMON === 'true';
+    if (!isDaemonProcess && !options.simulate) {
+      try {
+        const { DaemonClient } = await import('../daemon/client');
+        const daemonClient = new DaemonClient();
+        
+        // Active check via API heartbeat
+        const isRunning = await daemonClient.isDaemonRunning();
+        logger.info(`[ExecuteService] Checking daemon status via API: ${isRunning ? 'Online' : 'Offline'}`);
+        
+        if (isRunning) {
+          logger.info('[ExecuteService] Daemon is online, delegating execution for better performance');
+          try {
+            const result = await daemonClient.executeNaturalLanguage(query, options);
+            logger.info('[ExecuteService] Execution delegated to daemon successfully');
+            return result as UnifiedExecutionResult;
+          } catch (daemonError: any) {
+            logger.warn(`[ExecuteService] Daemon delegation failed: ${daemonError.message}, falling back to local execution`);
+          }
+        }
+      } catch (err: any) {
+        logger.info(`[ExecuteService] Failed to check daemon status: ${err.message}`);
+      }
+    }
+
     try {
       // Ensure service is initialized
       await this.initialize();
@@ -757,17 +784,53 @@ CRITICAL: Some tools are "helper" tools that only prepare data for other tools (
         if (lines.length > 0) {
           logger.info(`[ExecuteService] Found ${lines.length} potential MCP processes via ps`);
           
-          // Try to find servers from the registry cache that might be running
-          const registryClient = getRegistryClient();
+          // First, try to find and connect to all cached manifests (including baidu-map, etc.)
+          // This is more comprehensive than just KnownServers
+          const manifestsToTry: Array<{ name: string; manifest: any }> = [];
           
-          // Try common known server names
+          // Collect from cache directory
+          try {
+            const fs = await import('fs/promises');
+            const path = await import('path');
+            const { INTORCH_HOME } = await import('../core/constants');
+            const cacheDir = path.join(INTORCH_HOME, 'cache', 'manifests');
+            const files = await fs.readdir(cacheDir);
+            for (const file of files) {
+              if (!file.endsWith('.json')) continue;
+              try {
+                const manifestPath = path.join(cacheDir, file);
+                const content = await fs.readFile(manifestPath, 'utf-8');
+                const manifest = JSON.parse(content);
+                const serverName = manifest.name || file.replace('.json', '');
+                manifestsToTry.push({ name: serverName, manifest });
+              } catch (e: any) {
+                // Skip invalid manifests
+              }
+            }
+          } catch (cacheError: any) {
+            logger.debug(`[ExecuteService] Cache read failed: ${cacheError.message}`);
+          }
+          
+          // Also add KnownServers that might not be in cache
+          const registryClient = getRegistryClient();
           for (const serverName of KnownServers) {
+            if (manifestsToTry.some(m => m.name === serverName)) continue;
             try {
               const manifest = await registryClient.getCachedManifest(serverName);
               if (manifest) {
-                logger.debug(`[ExecuteService] Attempting to connect to cached server: ${serverName}`);
-                await this.connectToServer(serverName, manifest);
+                manifestsToTry.push({ name: serverName, manifest });
               }
+            } catch (e: any) {
+              // Skip
+            }
+          }
+          
+          // Try to connect to each manifest
+          for (const { name: serverName, manifest } of manifestsToTry) {
+            if (this.connectedServers.has(serverName)) continue;
+            try {
+              logger.debug(`[ExecuteService] Attempting to connect to cached server: ${serverName}`);
+              await this.connectToServer(serverName, manifest);
             } catch (err: any) {
               logger.debug(`[ExecuteService] Failed to connect to cached server ${serverName}: ${err.message}`);
             }
@@ -813,13 +876,60 @@ CRITICAL: Some tools are "helper" tools that only prepare data for other tools (
     }
     
     try {
+      // Try to find an existing process handle from ProcessManager
+      const processManager = getProcessManager();
+      const existingProcess = await processManager.getProcessHandleByServerName(serverName);
+
+      if (existingProcess) {
+        logger.debug(`[ExecuteService] Found existing process handle for ${serverName}, reusing it`);
+      } else {
+        // If no existing process handle in memory, check if there's a running process in store
+        // and stop it first to avoid port/stdio conflicts when spawning a new one
+        const runningInfo = await processManager.getByServerName(serverName);
+        if (runningInfo && runningInfo.status === 'running') {
+          logger.debug(`[ExecuteService] Found running process ${runningInfo.pid} for ${serverName} in store, stopping it first`);
+          try {
+            await processManager.stop(runningInfo.pid);
+            // Wait a moment for the process to fully stop
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (stopError: any) {
+            logger.warn(`[ExecuteService] Failed to stop existing process for ${serverName}: ${stopError.message}`);
+          }
+        }
+      }
+
+      // Build environment variables including required secrets from manifest
+      const envVars: Record<string, string> = { ...process.env } as Record<string, string>;
+      if (manifest.runtime.env && manifest.runtime.env.length > 0) {
+        logger.debug(`[ExecuteService] Manifest requires env vars: ${manifest.runtime.env.join(', ')}`);
+        const { getSecretManager } = await import('../secret/manager');
+        const secretManager = getSecretManager();
+        for (const envName of manifest.runtime.env) {
+          if (!envVars[envName]) {
+            try {
+              const secretValue = await secretManager.get(envName);
+              logger.debug(`[ExecuteService] Secret ${envName} resolved: ${secretValue ? 'found (length=' + secretValue.length + ')' : 'not found'}`);
+              if (secretValue) {
+                envVars[envName] = secretValue;
+              }
+            } catch (e: any) {
+              logger.debug(`[ExecuteService] Failed to get secret ${envName}: ${e.message}`);
+            }
+          } else {
+            logger.debug(`[ExecuteService] Env var ${envName} already set in process.env`);
+          }
+        }
+      }
+
       const client = new MCPClient({
         transport: {
           type: 'stdio' as const,
           command: manifest.runtime.command,
           args: manifest.runtime.args || [],
-          env: { ...process.env } as Record<string, string>
-        }
+          env: envVars,
+          existingProcess: existingProcess
+        },
+        serverName: serverName
       });
 
       // Handle transport errors to prevent process crash

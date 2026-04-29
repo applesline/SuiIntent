@@ -156,6 +156,13 @@ class ApiService {
     return result;
   }
 
+  /**
+   * Import MCP config (Claude Desktop format)
+   */
+  async importConfig(config: string): Promise<{ success: boolean; message: string; imported: any[]; total: number }> {
+    return await this.client.post('/api/servers/import', { config }) as any;
+  }
+
   async startServer(request: StartServerRequest): Promise<ProcessInfo> {
     const response = await this.client.post(`/api/servers`, { serverNameOrUrl: request.serverId }) as any;
     return {

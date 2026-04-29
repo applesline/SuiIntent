@@ -5,9 +5,9 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { formatMCPServerName } from '../utils/format';
 import type { MCPServer } from '../types';
 import toast from 'react-hot-toast';
-import { X, Search, Download, Layers, Activity, PlayCircle, StopCircle, Plus } from 'lucide-react';
+import { Search, Layers, Activity, FileJson, Globe, Terminal } from 'lucide-react';
 
-// Registry sources available
+// Registry sources available (official removed)
 const REGISTRY_SOURCES = [
   { 
     id: 'github', 
@@ -29,16 +29,32 @@ const REGISTRY_SOURCES = [
   },
 ];
 
-// Example inputs for each registry source
-const REGISTRY_EXAMPLES: Record<string, string[]> = {
-  github: ['github/github-mcp-server', 'owner/repo', 'owner/repo@main', 'owner/repo:dist/mcp.json'],
-  gitee: ['Joooook/12306-mcp', 'owner/server-name'],
-  direct: ['https://example.com/mcp.json', 'file:///path/to/mcp.json', '/local/path/mcp.json'],
-};
+// Default Claude Desktop config template
+const DEFAULT_CLAUDE_CONFIG = `{
+  "mcpServers": {
+    "example-server": {
+      "command": "node",
+      "args": ["path/to/server.js"],
+      "env": {
+        "API_KEY": "your-api-key"
+      }
+    }
+  }
+}`;
+
+// Tab definitions
+const TABS = [
+  { id: 'mcp-standard', label: 'MCP 标准配置', icon: FileJson },
+  { id: 'github', label: 'GitHub Hub', icon: Globe },
+  { id: 'gitee', label: 'Gitee Hub', icon: Globe },
+] as const;
+
+type TabId = typeof TABS[number]['id'];
 
 export default function Servers() {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<TabId>('mcp-standard');
   const [pullUrl, setPullUrl] = useState('');
   const [selectedSource, setSelectedSource] = useState<string>('github');
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,6 +70,10 @@ export default function Servers() {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [startingServers, setStartingServers] = useState<Set<string>>(new Set());
   const [searchError, setSearchError] = useState<string | null>(null);
+  
+  // Import config state
+  const [importConfigText, setImportConfigText] = useState(DEFAULT_CLAUDE_CONFIG);
+  const [importResult, setImportResult] = useState<{ success: boolean; message: string; imported: any[]; total: number } | null>(null);
 
   // Use React Query for servers list
   const { data: servers = [], isLoading, error: queryError } = useQuery({
@@ -85,6 +105,20 @@ export default function Servers() {
     },
     onError: (error: any) => {
       toast.error(error.message || t('servers.error.pullFailed'));
+    }
+  });
+
+  // Import config mutation
+  const importConfigMutation = useMutation({
+    mutationFn: (config: string) => apiService.importConfig(config),
+    onSuccess: (data) => {
+      setImportResult(data);
+      queryClient.invalidateQueries({ queryKey: ['servers'] });
+      toast.success(data.message || `Successfully imported ${data.total} MCP server(s)`);
+    },
+    onError: (error: any) => {
+      setImportResult({ success: false, message: error.message, imported: [], total: 0 });
+      toast.error(error.message || 'Failed to import config');
     }
   });
 
@@ -143,6 +177,15 @@ export default function Servers() {
     }
 
     pullServerMutation.mutate(serverName);
+  };
+
+  const handleImportConfig = () => {
+    if (!importConfigText.trim()) {
+      toast.error('Config content is required');
+      return;
+    }
+    setImportResult(null);
+    importConfigMutation.mutate(importConfigText);
   };
 
   const handleStopServer = (id: string) => {
@@ -243,120 +286,300 @@ export default function Servers() {
         </div>
       )}
 
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">{t('servers.pullNewServer')}</h2>
-        
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            {t('servers.registrySource')}
-          </label>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {REGISTRY_SOURCES.map((source) => (
-              <button
-                key={source.id}
-                type="button"
-                onClick={() => setSelectedSource(source.id)}
-                className={`px-3 py-2 text-sm rounded-lg border text-left transition-colors ${
-                  selectedSource === source.id
-                    ? 'bg-primary-50 border-primary-500 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
-                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-300'
-                }`}
-              >
-                <div className="font-medium">{source.name}</div>
-                <div className="text-xs opacity-70 truncate">{source.description}</div>
-              </button>
-            ))}
-          </div>
-          
-          <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg">
-            <div className="flex items-start">
-              <Activity className="h-5 w-5 text-gray-400 mt-0.5" />
-              <div className="ml-3">
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {t('servers.downloadUrlInfo')}: {REGISTRY_SOURCES.find(s => s.id === selectedSource)?.name}
-                </p>
-                <div className="mt-1 p-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono text-gray-800 dark:text-gray-200 break-all">
-                  {getActualDownloadUrl()}
-                </div>
-              </div>
-            </div>
-          </div>
+      {/* Tabbed Pull / Import Section */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        {/* Tab Header */}
+        <div className="border-b border-gray-200 dark:border-gray-700">
+          <nav className="flex" aria-label="Tabs">
+            {TABS.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    // Reset import result when switching tabs
+                    if (tab.id !== 'mcp-standard') {
+                      setImportResult(null);
+                    }
+                  }}
+                  className={`flex items-center space-x-2 px-6 py-3.5 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === tab.id
+                      ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              {t('servers.searchServers')}
-            </label>
-            <div className="flex space-x-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  placeholder={t('servers.searchPlaceholder', { source: REGISTRY_SOURCES.find(s => s.id === selectedSource)?.name })}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                />
+        {/* Tab Content */}
+        <div className="p-6">
+          {/* MCP Standard Config Tab */}
+          {activeTab === 'mcp-standard' && (
+            <div className="space-y-4">
+              <div className="flex items-center space-x-2">
+                <Terminal className="h-5 w-5 text-primary-500" />
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                  Import Claude Desktop Config
+                </h3>
               </div>
-              <button
-                onClick={handleSearch}
-                disabled={searchLoading}
-                className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
-              >
-                {searchLoading ? 'Searching...' : t('common.search')}
-              </button>
-            </div>
-            
-            {showSearchResults && (
-              <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-900/30">
-                <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                  <span className="text-sm font-medium">Search Results ({searchResults.length})</span>
-                  <button onClick={() => setShowSearchResults(false)} className="text-xs text-primary-500">Close</button>
-                </div>
-                <div className="max-h-60 overflow-auto divide-y divide-gray-200 dark:divide-gray-700">
-                  {searchResults.map((service, index) => (
-                    <div
-                      key={index}
-                      className="px-4 py-3 hover:bg-white dark:hover:bg-gray-800 cursor-pointer"
-                      onClick={() => handleSelectSearchResult(service.name, service.source)}
-                    >
-                      <div className="font-medium text-gray-900 dark:text-white">{service.name}</div>
-                      {service.description && <div className="text-sm text-gray-500 truncate">{service.description}</div>}
-                    </div>
-                  ))}
-                  {searchResults.length === 0 && !searchLoading && <div className="p-4 text-center text-gray-500">No results found</div>}
-                </div>
+              
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Paste your Claude Desktop MCP configuration below. The system will automatically parse it and convert each server entry into a compatible format.
+              </p>
+              
+              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <p className="text-xs text-blue-700 dark:text-blue-400">
+                  <strong>Format:</strong> Claude Desktop uses <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">mcpServers</code> field with server name, command, args, and env.
+                  Each server will be automatically converted to IntentOrch manifest format.
+                </p>
               </div>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              {t('servers.pullDescription')}
-            </label>
-            <div className="flex space-x-2">
-              <input
-                type="text"
-                value={pullUrl}
-                onChange={(e) => setPullUrl(e.target.value)}
-                placeholder={t('servers.pullPlaceholder')}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
-                onKeyDown={(e) => e.key === 'Enter' && handlePullServer()}
+              
+              <textarea
+                value={importConfigText}
+                onChange={(e) => setImportConfigText(e.target.value)}
+                className="w-full h-64 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 font-mono text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                placeholder={DEFAULT_CLAUDE_CONFIG}
+                spellCheck={false}
               />
-              <button
-                onClick={handlePullServer}
-                disabled={pullServerMutation.isPending || !pullUrl.trim()}
-                className="px-6 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
-              >
-                {pullServerMutation.isPending ? 'Pulling...' : t('servers.pullButton')}
-              </button>
+              
+              {importResult && (
+                <div className={`p-4 rounded-lg border ${
+                  importResult.success 
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' 
+                    : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                }`}>
+                  <p className={`text-sm font-medium ${
+                    importResult.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'
+                  }`}>
+                    {importResult.message}
+                  </p>
+                  {importResult.imported && importResult.imported.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {importResult.imported.map((item, idx) => (
+                        <li key={idx} className="text-xs text-gray-600 dark:text-gray-400">
+                          ✓ {item.name} (v{item.version})
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              
+              <div className="flex justify-end">
+                <button
+                  onClick={handleImportConfig}
+                  disabled={importConfigMutation.isPending || !importConfigText.trim()}
+                  className="px-6 py-2 text-sm bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 transition-colors"
+                >
+                  {importConfigMutation.isPending ? 'Importing...' : 'Import Config'}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* GitHub Hub Tab */}
+          {activeTab === 'github' && (
+            <div className="space-y-4">
+              <div className="flex items-center space-x-2">
+                <Globe className="h-5 w-5 text-primary-500" />
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                  GitHub Hub
+                </h3>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t('servers.searchServers')}
+                </label>
+                <div className="flex space-x-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                      placeholder={t('servers.searchPlaceholder', { source: 'GitHub Hub' })}
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    />
+                  </div>
+                  <button
+                    onClick={handleSearch}
+                    disabled={searchLoading}
+                    className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
+                  >
+                    {searchLoading ? 'Searching...' : t('common.search')}
+                  </button>
+                </div>
+                
+                {showSearchResults && (
+                  <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-900/30">
+                    <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                      <span className="text-sm font-medium">Search Results ({searchResults.length})</span>
+                      <button onClick={() => setShowSearchResults(false)} className="text-xs text-primary-500">Close</button>
+                    </div>
+                    <div className="max-h-60 overflow-auto divide-y divide-gray-200 dark:divide-gray-700">
+                      {searchResults.map((service, index) => (
+                        <div
+                          key={index}
+                          className="px-4 py-3 hover:bg-white dark:hover:bg-gray-800 cursor-pointer"
+                          onClick={() => handleSelectSearchResult(service.name, service.source)}
+                        >
+                          <div className="font-medium text-gray-900 dark:text-white">{service.name}</div>
+                          {service.description && <div className="text-sm text-gray-500 truncate">{service.description}</div>}
+                        </div>
+                      ))}
+                      {searchResults.length === 0 && !searchLoading && <div className="p-4 text-center text-gray-500">No results found</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t('servers.pullDescription')}
+                </label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={pullUrl}
+                    onChange={(e) => setPullUrl(e.target.value)}
+                    placeholder="github/owner/repo 或 owner/repo"
+                    className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+                    onKeyDown={(e) => e.key === 'Enter' && handlePullServer()}
+                  />
+                  <button
+                    onClick={handlePullServer}
+                    disabled={pullServerMutation.isPending || !pullUrl.trim()}
+                    className="px-6 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
+                  >
+                    {pullServerMutation.isPending ? 'Pulling...' : t('servers.pullButton')}
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <div className="flex items-start">
+                  <Activity className="h-5 w-5 text-gray-400 mt-0.5" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {t('servers.downloadUrlInfo')}: GitHub Hub
+                    </p>
+                    <div className="mt-1 p-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono text-gray-800 dark:text-gray-200 break-all">
+                      {getActualDownloadUrl()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Gitee Hub Tab */}
+          {activeTab === 'gitee' && (
+            <div className="space-y-4">
+              <div className="flex items-center space-x-2">
+                <Globe className="h-5 w-5 text-primary-500" />
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                  Gitee Hub
+                </h3>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t('servers.searchServers')}
+                </label>
+                <div className="flex space-x-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                      placeholder={t('servers.searchPlaceholder', { source: 'Gitee Hub' })}
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    />
+                  </div>
+                  <button
+                    onClick={handleSearch}
+                    disabled={searchLoading}
+                    className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
+                  >
+                    {searchLoading ? 'Searching...' : t('common.search')}
+                  </button>
+                </div>
+                
+                {showSearchResults && (
+                  <div className="mt-3 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-900/30">
+                    <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                      <span className="text-sm font-medium">Search Results ({searchResults.length})</span>
+                      <button onClick={() => setShowSearchResults(false)} className="text-xs text-primary-500">Close</button>
+                    </div>
+                    <div className="max-h-60 overflow-auto divide-y divide-gray-200 dark:divide-gray-700">
+                      {searchResults.map((service, index) => (
+                        <div
+                          key={index}
+                          className="px-4 py-3 hover:bg-white dark:hover:bg-gray-800 cursor-pointer"
+                          onClick={() => handleSelectSearchResult(service.name, service.source)}
+                        >
+                          <div className="font-medium text-gray-900 dark:text-white">{service.name}</div>
+                          {service.description && <div className="text-sm text-gray-500 truncate">{service.description}</div>}
+                        </div>
+                      ))}
+                      {searchResults.length === 0 && !searchLoading && <div className="p-4 text-center text-gray-500">No results found</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t('servers.pullDescription')}
+                </label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={pullUrl}
+                    onChange={(e) => setPullUrl(e.target.value)}
+                    placeholder="owner/server-name"
+                    className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+                    onKeyDown={(e) => e.key === 'Enter' && handlePullServer()}
+                  />
+                  <button
+                    onClick={handlePullServer}
+                    disabled={pullServerMutation.isPending || !pullUrl.trim()}
+                    className="px-6 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
+                  >
+                    {pullServerMutation.isPending ? 'Pulling...' : t('servers.pullButton')}
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <div className="flex items-start">
+                  <Activity className="h-5 w-5 text-gray-400 mt-0.5" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {t('servers.downloadUrlInfo')}: Gitee Hub
+                    </p>
+                    <div className="mt-1 p-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono text-gray-800 dark:text-gray-200 break-all">
+                      {getActualDownloadUrl()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* Pulled Servers List */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-medium text-gray-900 dark:text-white">{t('servers.pulledServers')}</h2>

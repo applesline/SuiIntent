@@ -43,9 +43,44 @@ class StdioTransport extends EventEmitter {
   async connect(): Promise<void> {
     if (this._connected) return;
 
+    // Helper to setup listeners for a process
+    const setupProcessListeners = (child: ChildProcess) => {
+      child.stdout?.on('data', (data: Buffer) => {
+        this.buffer += data.toString();
+        this.processBuffer();
+      });
+
+      child.stderr?.on('data', (data: Buffer) => {
+        // MCP servers often log to stderr, forward as debug
+        const msg = data.toString().trim();
+        if (msg) {
+          this.emit('stderr', msg);
+        }
+      });
+
+      child.on('error', (error: Error) => {
+        this._connected = false;
+        this.emit('error', error);
+      });
+
+      child.on('exit', (code: number | null) => {
+        this._connected = false;
+        this.emit('disconnected');
+        if (code !== 0 && code !== null) {
+          this.emit('error', new Error(`Process exited with code ${code}`));
+        }
+      });
+
+      child.on('close', () => {
+        this._connected = false;
+        this.emit('disconnected');
+      });
+    };
+
     // If an existing process was provided, use it directly
     if (this._existingProcess) {
       this.process = this._existingProcess;
+      setupProcessListeners(this.process);
       this._connected = true;
       this.emit('connected');
       return;
@@ -60,38 +95,7 @@ class StdioTransport extends EventEmitter {
         });
 
         this.process = child;
-
-        child.stdout?.on('data', (data: Buffer) => {
-          this.buffer += data.toString();
-          this.processBuffer();
-        });
-
-        child.stderr?.on('data', (data: Buffer) => {
-          // MCP servers often log to stderr, forward as debug
-          const msg = data.toString().trim();
-          if (msg) {
-            this.emit('stderr', msg);
-          }
-        });
-
-        child.on('error', (error: Error) => {
-          this._connected = false;
-          this.emit('error', error);
-          reject(error);
-        });
-
-        child.on('exit', (code: number | null) => {
-          this._connected = false;
-          this.emit('disconnected');
-          if (code !== 0 && code !== null) {
-            this.emit('error', new Error(`Process exited with code ${code}`));
-          }
-        });
-
-        child.on('close', () => {
-          this._connected = false;
-          this.emit('disconnected');
-        });
+        setupProcessListeners(child);
 
         // Give the process a moment to start
         setTimeout(() => {
@@ -195,7 +199,7 @@ export class MCPClient extends EventEmitter {
       command: config.transport.command || 'npx',
       args: config.transport.args || [],
       env: config.transport.env as Record<string, string> | undefined,
-      existingProcess: (config.transport as any).existingProcess || undefined,
+      existingProcess: config.transport.existingProcess,
     });
     this.setupTransportListeners();
   }

@@ -352,6 +352,24 @@ export class ProcessManager {
     return this.store.getProcessByServerName(serverName);
   }
 
+  /**
+   * Get the actual ChildProcess handle for a PID if it's managed by this instance
+   */
+  getProcessHandle(pid: number): ChildProcess | undefined {
+    return this.processes.get(pid);
+  }
+
+  /**
+   * Get the actual ChildProcess handle for a server name if it's managed by this instance
+   */
+  async getProcessHandleByServerName(serverName: string): Promise<ChildProcess | undefined> {
+    const info = await this.getByServerName(serverName);
+    if (info && info.pid) {
+      return this.processes.get(info.pid);
+    }
+    return undefined;
+  }
+
   async isRunning(pid: number): Promise<boolean> {
     const process = this.processes.get(pid);
     if (process) {
