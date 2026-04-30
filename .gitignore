@@ -98,6 +98,7 @@ storybook-static
 # Temporary folders
 tmp/
 temp/
+.worktrees/
 
 # IDE files
 .vscode/
