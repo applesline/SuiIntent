@@ -84,7 +84,10 @@ const SuiTestnet: React.FC = () => {
       await orchestrator.initialize();
 
       // 构建 PTB
-      const tx = await orchestrator.buildPlanTransaction(plan);
+      const tx = await orchestrator.buildPlanTransaction(plan, currentAccount.address);
+
+      // 关键修复：必须设置 sender，否则钱包在解析 gas payment 时会失败
+      tx.setSender(currentAccount.address);
 
       // 设置 Gas 预算
       tx.setGasBudget(10_000_000);

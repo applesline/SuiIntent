@@ -323,16 +323,27 @@ export class CetusAdapter implements IProtocolAdapter {
     const integratePackage = cetusConfig.integrate_published_at;
     const globalConfigId = cetusConfig.global_config_id;
 
-    // sqrtPriceLimit: 使用极端的 sqrt price 值作为无限制
-    // 注意：Cetus 的 flash_swap_internal 不接受 sqrtPriceLimit=0
+    // sqrtPriceLimit: 从池子中获取当前 sqrtPrice，基于滑点计算合理的价格范围
+    // Cetus 的 flash_swap_internal 不接受 sqrtPriceLimit=0 或 u128::MAX
     // 0 会导致 abort code 11 (EInsufficientLiquidity)
-    // 正确做法：
-    // - a2b=true (从 A 换到 B): 使用 MIN_SQRT_PRICE + 1 作为下限
-    // - a2b=false (从 B 换到 A): 使用 MAX_SQRT_PRICE - 1 作为上限
-    // 注意：sqrtPriceLimit 是 u128 类型，最大值不能超过 2^128-1
-    const MIN_SQRT_PRICE = '4295048016';
-    const MAX_SQRT_PRICE = '340282366920938463463374607431768211455'; // u128::MAX
-    const sqrtPriceLimit = a2b ? MIN_SQRT_PRICE : MAX_SQRT_PRICE;
+    // u128::MAX 也会被合约拒绝
+    // 正确做法：从池子中获取 current_sqrt_price，然后：
+    // - a2b=true (从 A 换到 B): 使用 current_sqrt_price * (1 - slippage) 作为下限
+    // - a2b=false (从 B 换到 A): 使用 current_sqrt_price * (1 + slippage) 作为上限
+    const currentSqrtPrice = await this.getPoolCurrentSqrtPrice(resolvedPoolId, network);
+    const slippageBps = BigInt(params.slippage ? Math.floor(Number(params.slippage) * 10000) : 100); // 默认 1%
+    const sqrtPriceBigInt = BigInt(currentSqrtPrice);
+    let sqrtPriceLimit: string;
+    if (a2b) {
+      // 从 A 换到 B：价格下降，sqrtPrice 下降
+      // sqrtPriceLimit = currentSqrtPrice * (10000 - slippageBps) / 10000
+      sqrtPriceLimit = ((sqrtPriceBigInt * (10000n - slippageBps)) / 10000n).toString();
+    } else {
+      // 从 B 换到 A：价格上涨，sqrtPrice 上涨
+      // sqrtPriceLimit = currentSqrtPrice * (10000 + slippageBps) / 10000
+      sqrtPriceLimit = ((sqrtPriceBigInt * (10000n + slippageBps)) / 10000n).toString();
+    }
+    logger.info(`[CetusAdapter] Using sqrtPriceLimit=${sqrtPriceLimit} (current=${currentSqrtPrice}, slippage=${slippageBps}bps, a2b=${a2b})`);
     const CLOCK_ADDRESS = '0x6';
 
     // 构建输入 Coin
@@ -526,6 +537,65 @@ export class CetusAdapter implements IProtocolAdapter {
     } catch (error: any) {
       logger.error(`[CetusAdapter] Failed to resolve pool coin types: ${error.message}`);
       throw new Error(`Cannot resolve pool coin types for swap: ${error.message}`);
+    }
+  }
+
+  /**
+   * 从链上查询池子的当前 sqrtPrice
+   *
+   * 通过 RPC 查询池子对象的 current_sqrt_price 字段。
+   * 用于计算合理的 sqrtPriceLimit，避免使用 u128::MAX 或 0 导致合约 abort。
+   *
+   * @param poolId - 池子对象 ID
+   * @param network - 网络类型
+   * @returns 当前 sqrtPrice 的字符串表示
+   */
+  private async getPoolCurrentSqrtPrice(
+    poolId: string,
+    network: SuiNetwork,
+  ): Promise<string> {
+    const rpcUrl = getRpcUrl(network);
+
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'sui_getObject',
+          params: [
+            poolId,
+            {
+              showType: false,
+              showContent: true,
+            },
+          ],
+        }),
+      });
+
+      const json = await response.json() as any;
+      const result = json?.result?.data;
+
+      if (!result || !result.content || !result.content.fields) {
+        throw new Error(`Failed to get pool content for ${poolId}`);
+      }
+
+      const fields = result.content.fields;
+      const currentSqrtPrice = fields.current_sqrt_price;
+
+      if (!currentSqrtPrice) {
+        throw new Error(`Pool ${poolId} has no current_sqrt_price field`);
+      }
+
+      logger.info(`[CetusAdapter] Pool ${poolId} current_sqrt_price: ${currentSqrtPrice}`);
+      return String(currentSqrtPrice);
+    } catch (error: any) {
+      logger.error(`[CetusAdapter] Failed to get pool current sqrt price: ${error.message}`);
+      // 如果查询失败，使用一个合理的默认值
+      // 对于 SUI/USDC 池子，sqrtPrice 通常在 10^12 ~ 10^15 之间
+      logger.warn(`[CetusAdapter] Using default sqrt price fallback`);
+      return '1000000000000000';
     }
   }
 

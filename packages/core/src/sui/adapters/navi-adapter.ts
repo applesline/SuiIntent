@@ -184,11 +184,22 @@ export class NaviAdapter implements IProtocolAdapter {
       throw new Error('Missing required parameters for Navi operation');
     }
 
-    // 处理 "auto" 金额：使用 0 作为占位符，实际金额由 PTB 执行时动态确定
+    // 处理 "auto" 金额
+    // 如果提供了 coinObject（来自前一步骤的输出），使用 coin::value 动态获取余额
+    // 否则使用 0 作为占位符（由用户在签名时提供实际余额）
     let resolvedAmount: string;
+    let useDynamicAmount = false;
     if (amount === 'auto' || amount === 'all') {
-      resolvedAmount = '0';
-      logger.warn(`[NaviAdapter] amount="${amount}" resolved to 0 (placeholder). Actual amount will be determined at runtime.`);
+      if (params.coinObject) {
+        // 有 coinObject 时，使用 coin::value 动态获取余额
+        // 这样 Navi 合约的 split_coin 不会因为 amount=0 而 abort
+        useDynamicAmount = true;
+        resolvedAmount = '0'; // 占位符，实际会被 coin::value 覆盖
+        logger.info(`[NaviAdapter] amount="${amount}" with coinObject, will use dynamic amount via coin::value`);
+      } else {
+        resolvedAmount = '0';
+        logger.warn(`[NaviAdapter] amount="${amount}" resolved to 0 (placeholder). Actual amount will be determined at runtime.`);
+      }
     } else {
       resolvedAmount = String(amount);
     }
@@ -217,6 +228,24 @@ export class NaviAdapter implements IProtocolAdapter {
             typeArguments: [coinType],
           });
         }
+
+        // 确定存款金额
+        // 如果 useDynamicAmount=true，使用 coin::value 动态获取 coin 的余额
+        // 否则使用 resolvedAmount
+        let depositAmount;
+        if (useDynamicAmount && params.coinObject) {
+          // 使用 coin::value 获取 coin 的余额作为存款金额
+          // 这样 Navi 合约的 split_coin 不会因为 amount=0 而 abort
+          depositAmount = tx.moveCall({
+            target: `0x2::coin::value`,
+            typeArguments: [coinType],
+            arguments: [depositCoin],
+          });
+          logger.info(`[NaviAdapter] Using dynamic deposit amount via coin::value for ${coinType}`);
+        } else {
+          depositAmount = tx.pure.u64(BigInt(resolvedAmount));
+        }
+
         tx.moveCall({
           target: `${naviPackage}::incentive_v3::entry_deposit`,
           typeArguments: [coinType],
@@ -226,7 +255,7 @@ export class NaviAdapter implements IProtocolAdapter {
             tx.object(poolConfig.poolId),
             tx.pure.u8(poolConfig.assetId),
             depositCoin,
-            tx.pure.u64(BigInt(resolvedAmount)),
+            depositAmount,
             tx.object(naviConfig.incentive_v2),
             tx.object(naviConfig.incentive_v3),
           ],

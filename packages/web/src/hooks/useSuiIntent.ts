@@ -223,12 +223,16 @@ export function useSuiIntent() {
     const txBytes = fromBase64(data.txBytes);
 
     // 从 txBytes 重建 Transaction 对象
-    // daemon 返回的是 TransactionKind BCS 格式（onlyTransactionKind=true），
-    // 所以使用 Transaction.fromKind(txBytes) 解析。
-    // Transaction.fromKind() 解析 TransactionKind BCS，gasData.payment 保持为 null，
-    // 钱包的 coreClientResolveTransactionPlugin 检测到 needsPayment = true，
-    // 会自动调用 listCoins 获取用户的 gas coin 并填充。
+    // daemon 使用 onlyTransactionKind=true 构建，返回的是 TransactionKind 字节（不是完整的 TransactionData）。
+    // 必须使用 Transaction.fromKind() 来反序列化，因为 Transaction.from() 期望的是完整的 TransactionData，
+    // 会把 TransactionKind 的枚举值 10（ProgrammableTransaction）当作 TransactionData 的 V1 枚举值来解析，
+    // 导致 "Unknown value 10 for enum TransactionKind" 错误。
     const tx = Transaction.fromKind(txBytes);
+
+    // 关键修复：必须设置 sender，否则钱包在解析 gas payment 时会失败（报 Transaction gas payment missing）
+    if (currentAccount?.address) {
+      tx.setSender(currentAccount.address);
+    }
 
     return { txBytes, tx };
   }, [plan, currentAccount, network]);
@@ -248,12 +252,15 @@ export function useSuiIntent() {
     setIsExecuting(true);
 
     try {
-      // 通过 daemon API 构建真实 PTB（使用 CrossProtocolOrchestrator）
-      const { txBytes } = await buildTransactionViaDaemon();
+      // 通过 daemon API 构建真实 PTB
+      const { tx } = await buildTransactionViaDaemon();
+
+      // 构建完整的 TransactionData 字节，因为 dryRunTransactionBlock 不接受 TransactionKind
+      const fullTxBytes = await tx.build({ client: suiClient });
 
       // 使用 suiClient 进行 dryRun
       const dryRunResult = await suiClient.dryRunTransactionBlock({
-        transactionBlock: txBytes,
+        transactionBlock: fullTxBytes,
       });
 
       const status = dryRunResult.effects.status.status;
