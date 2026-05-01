@@ -184,12 +184,14 @@ async function handleBuildTransaction(res: http.ServerResponse, body: string): P
     // 将前端传来的 plan steps（toolName 格式）转换为 CrossProtocolOrchestrator 能理解的格式
     const crossProtocolSteps = plan.steps.map((step: any) => {
       const { protocol, action } = parseToolName(step.toolName);
+      // 标准化参数名：LLM 可能返回不同风格的参数名（如 coinIn/coinOut 或 coinTypeIn/coinTypeOut）
+      const normalizedArgs = normalizeStepArguments(protocol, action, step.arguments || {});
       return {
         id: step.id || `step_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         protocol,
         action,
         description: step.description || `${protocol} ${action}`,
-        params: { ...step.arguments, action },
+        params: { ...normalizedArgs, action },
         dependsOn: step.dependsOn || [],
       };
     });
@@ -267,6 +269,131 @@ function parseToolName(toolName: string): { protocol: string; action: string } {
   const protocol = parts[0];
   const action = parts.slice(1).join('_');
   return { protocol, action };
+}
+
+/**
+ * 标准化步骤参数名
+ *
+ * LLM 可能返回不同风格的参数名，需要映射为适配器期望的标准参数名。
+ * 例如：
+ * - coinIn / inputCoin / from → coinTypeIn
+ * - coinOut / outputCoin / to → coinTypeOut
+ * - amountIn / value / quantity → amount
+ */
+function normalizeStepArguments(
+  protocol: string,
+  action: string,
+  args: Record<string, any>,
+): Record<string, any> {
+  const normalized: Record<string, any> = { ...args };
+
+  // Cetus swap 参数名映射
+  if (protocol === 'cetus' && action === 'swap') {
+    // coinTypeIn 的别名
+    if (!normalized.coinTypeIn) {
+      normalized.coinTypeIn =
+        normalized.coinIn ||
+        normalized.inputCoin ||
+        normalized.from ||
+        normalized.sellCoin ||
+        normalized.coinA ||
+        undefined;
+    }
+    // coinTypeOut 的别名
+    if (!normalized.coinTypeOut) {
+      normalized.coinTypeOut =
+        normalized.coinOut ||
+        normalized.outputCoin ||
+        normalized.to ||
+        normalized.buyCoin ||
+        normalized.coinB ||
+        undefined;
+    }
+    // amount 的别名
+    if (!normalized.amount) {
+      normalized.amount =
+        normalized.amountIn ||
+        normalized.value ||
+        normalized.quantity ||
+        normalized.inputAmount ||
+        undefined;
+    }
+    // 清理别名，避免混淆
+    delete normalized.coinIn;
+    delete normalized.inputCoin;
+    delete normalized.from;
+    delete normalized.sellCoin;
+    delete normalized.coinA;
+    delete normalized.coinOut;
+    delete normalized.outputCoin;
+    delete normalized.to;
+    delete normalized.buyCoin;
+    delete normalized.coinB;
+    delete normalized.amountIn;
+    delete normalized.value;
+    delete normalized.quantity;
+    delete normalized.inputAmount;
+  }
+
+  // Navi 操作参数名映射
+  if (protocol === 'navi') {
+    // coinType 的别名
+    if (!normalized.coinType) {
+      normalized.coinType =
+        normalized.coin ||
+        normalized.token ||
+        normalized.asset ||
+        normalized.coinIn ||
+        normalized.inputCoin ||
+        undefined;
+    }
+    // amount 的别名
+    if (!normalized.amount) {
+      normalized.amount =
+        normalized.value ||
+        normalized.quantity ||
+        normalized.amountIn ||
+        undefined;
+    }
+    delete normalized.coin;
+    delete normalized.token;
+    delete normalized.asset;
+    delete normalized.coinIn;
+    delete normalized.inputCoin;
+    delete normalized.value;
+    delete normalized.quantity;
+    delete normalized.amountIn;
+  }
+
+  // Sui transfer 参数名映射
+  if (protocol === 'sui' && action === 'transfer') {
+    // recipient 的别名
+    if (!normalized.recipient) {
+      normalized.recipient =
+        normalized.to ||
+        normalized.address ||
+        normalized.receiver ||
+        normalized.destination ||
+        undefined;
+    }
+    // coinType 的别名
+    if (!normalized.coinType) {
+      normalized.coinType =
+        normalized.coin ||
+        normalized.token ||
+        normalized.asset ||
+        undefined;
+    }
+    delete normalized.to;
+    delete normalized.address;
+    delete normalized.receiver;
+    delete normalized.destination;
+    delete normalized.coin;
+    delete normalized.token;
+    delete normalized.asset;
+  }
+
+  return normalized;
 }
 
 function sendJson(res: http.ServerResponse, status: number, data: any) {
