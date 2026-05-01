@@ -61,9 +61,11 @@ export function daemonPlugin(): Plugin {
     },
 
     /**
-     * 在 Vite 服务器关闭时关闭 Daemon
+     * Vite 服务器真正关闭时停止 Daemon
+     * 注意：使用 closeServer 而不是 closeBundle，
+     * 因为 closeBundle 在热重载时也会触发，会导致 daemon 被错误停止。
      */
-    async closeBundle() {
+    async closeServer() {
       if (daemonServer) {
         console.log('[daemon-plugin] Stopping DaemonServer...');
         try {
