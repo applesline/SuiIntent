@@ -84,7 +84,7 @@ export class DaemonServer {
 
     console.log(`[Daemon] ${method} ${path}`);
 
-    if (!(path === "/api/status" || path === "/api/auth/token")) {
+    if (!(path === "/api/status" || path === "/api/auth/token" || path === "/api/sui/parse-intent" || path === "/api/sui/build-transaction")) {
       const auth = req.headers.authorization;
       const token = await getSecretManager().get("daemon_auth_token");
       if (!auth || auth.substring(7) !== token)
@@ -1095,6 +1095,348 @@ export class DaemonServer {
         return this.sendJson(res, 500, {
           success: false,
           error: `Failed to parse intent: ${error.message}`,
+        });
+      }
+    }
+
+    // ===== Sui Intent Routes =====
+    if (path === "/api/sui/parse-intent" && method === "POST") {
+      try {
+        const { intent, apiKey, provider, model } = JSON.parse(body);
+
+        if (!intent) {
+          return this.sendJson(res, 400, { success: false, error: 'Missing required field: intent' });
+        }
+
+        if (!apiKey) {
+          return this.sendJson(res, 400, { success: false, error: 'Missing required field: apiKey' });
+        }
+
+        // 创建 CloudIntentEngine（用完即弃，不持久化 apiKey）
+        const { CloudIntentEngine } = await import("../ai/cloud-intent-engine.js");
+        const engine = new CloudIntentEngine({
+          llm: {
+            provider: provider || 'deepseek',
+            apiKey,
+            model: model || 'deepseek-chat',
+            temperature: 0.3,
+            maxTokens: 2000,
+            timeout: 30000,
+            maxRetries: 2,
+          },
+          execution: {
+            maxConcurrentTools: 3,
+            timeout: 60000,
+            retryAttempts: 1,
+            retryDelay: 1000,
+          },
+          fallback: {
+            enableKeywordMatching: true,
+            askUserOnFailure: false,
+          },
+        });
+
+        // 注册 Sui MCP Tools
+        const { getSuiMCPTools } = await import("../sui/sui-mcp-tools.js");
+        const suiTools = getSuiMCPTools();
+        engine.setAvailableTools(suiTools);
+
+        console.log(`[SuiIntent] Parsing intent with ${suiTools.length} Sui MCP tools available`);
+        console.log(`[SuiIntent] Using provider=${provider || 'deepseek'}, model=${model || 'deepseek-chat'}`);
+
+        // 使用 CloudIntentEngine 解析意图
+        // 使用 toolChoice: "none" 禁用 function calling，让 LLM 以纯文本 JSON 格式返回多步计划
+        // 因为 DeepSeek 的 function calling 倾向于只选择查询类工具（cetus_get_pools）
+        let plan = await engine.planQuery(intent, {
+          toolChoice: "none",
+          systemPrompt: `你是一个 Sui 区块链 DeFi 意图解析器。你的任务是将用户的自然语言描述转换为结构化的多步执行计划。
+
+可用的 DeFi 工具（请严格按需选择）：
+${suiTools.map(t => `- **${t.name}**: ${t.description?.split('\n')[0] || ''}`).join('\n')}
+
+## 关键规则（必须遵守）：
+1. **选择正确的工具**：用户说"卖出/兑换/swap" → 用 \`cetus_swap\`（不是 cetus_get_pools 或 cetus_get_quote）
+2. **多步意图**：如果用户描述包含多个操作（如"卖出 A 然后存入 B"），必须生成多个步骤
+3. **依赖关系**：如果步骤 B 需要步骤 A 的输出，设置 dependsOn: ["step_A_id"]
+4. **参数提取**：从用户描述中提取代币类型、金额、地址等参数
+5. **金额格式**：使用最小单位（如 0.1 SUI = 100000000）
+6. **代币类型**：使用完整格式（如 "0x2::sui::SUI"）
+
+## 常见场景示例：
+- "在 Cetus 上卖出 0.1 SUI 买入 USDC，然后在 Navi 上存入 USDC"
+  → 步骤1: cetus_swap (coinTypeIn="0x2::sui::SUI", coinTypeOut="0x...::usdc::USDC", amount="100000000")
+  → 步骤2: navi_deposit (coinType="0x...::usdc::USDC", amount="auto", dependsOn=["step1"])
+
+- "在 Cetus 上卖出 SUI 买入 USDC，然后将收益转入 0x123..."
+  → 步骤1: cetus_swap (coinTypeIn="0x2::sui::SUI", coinTypeOut="0x...::usdc::USDC", amount="auto")
+  → 步骤2: sui_transfer (recipient="0x123...", coinType="0x...::usdc::USDC", amount="all", dependsOn=["step1"])
+
+- "在 Navi 上存入 10 SUI"
+  → 步骤1: navi_deposit (coinType="0x2::sui::SUI", amount="10000000000")
+
+## 输出格式（重要）：
+你必须返回一个 **纯 JSON 对象**，不要使用 markdown 代码块包裹，不要添加任何解释性文字。
+直接输出 JSON，格式如下：
+{
+  "summary": "计划摘要",
+  "steps": [
+    {
+      "id": "step_1",
+      "toolName": "工具名称",
+      "description": "步骤描述",
+      "arguments": { "参数名": "参数值" },
+      "dependsOn": []
+    }
+  ]
+}
+
+## 重要：
+- 不要调用任何 function/tool
+- 不要使用 markdown 代码块包裹 JSON
+- 不要添加任何解释性文字，只输出 JSON
+- 如果用户描述包含多个操作，必须生成多个步骤
+- 确保代币类型使用完整格式`,
+        });
+
+        // 重试机制：如果第一次解析没有生成步骤，重试一次
+        if (plan.steps.length === 0) {
+          console.log('[SuiIntent] First attempt generated 0 steps, retrying with stricter prompt...');
+          plan = await engine.planQuery(intent, {
+            toolChoice: "none",
+            systemPrompt: `你是一个 Sui 区块链 DeFi 意图解析器。你必须生成一个多步执行计划。
+
+可用的执行工具（必须从以下工具中选择）：
+${suiTools.filter(t => !['cetus_get_pools', 'cetus_get_quote'].includes(t.name)).map(t => `- **${t.name}**: ${t.description?.split('\n')[0] || ''}`).join('\n')}
+
+## 强制规则（必须严格遵守）：
+1. 用户说"卖出/兑换/swap" → 必须用 \`cetus_swap\`
+2. 用户说"存入/deposit" → 必须用 \`navi_deposit\`
+3. 用户说"提取/withdraw" → 必须用 \`navi_withdraw\`
+4. 用户说"转账/转入/发送" → 必须用 \`sui_transfer\`
+5. 如果用户描述包含多个操作，必须生成多个步骤
+6. 如果步骤 B 需要步骤 A 的输出，设置 dependsOn
+7. 金额使用最小单位（如 0.1 SUI = 100000000）
+8. 代币类型使用完整格式（如 "0x2::sui::SUI"）
+
+## 输出格式：
+只输出纯 JSON，不要使用 markdown 代码块，不要添加任何解释文字：
+{
+  "summary": "计划摘要",
+  "steps": [
+    { "id": "step_1", "toolName": "cetus_swap", "description": "...", "arguments": {...}, "dependsOn": [] },
+    { "id": "step_2", "toolName": "navi_deposit", "description": "...", "arguments": {...}, "dependsOn": ["step_1"] }
+  ]
+}`,
+            model: model || 'deepseek-chat',
+            temperature: 0.1,
+          });
+          console.log(`[SuiIntent] Retry generated plan with ${plan.steps.length} steps`);
+        }
+
+        // 后处理：如果 LLM 只选择了查询类工具，手动修正为执行类工具
+        if (plan.steps.length > 0) {
+          const queryTools = ['cetus_get_pools', 'cetus_get_quote'];
+          const hasQueryTool = plan.steps.some(s => queryTools.includes(s.toolName));
+          const hasExecTool = plan.steps.some(s => ['cetus_swap', 'navi_deposit', 'navi_withdraw', 'navi_borrow', 'navi_repay', 'sui_transfer'].includes(s.toolName));
+
+          if (hasQueryTool && !hasExecTool) {
+            console.log('[SuiIntent] LLM selected query-only tools, applying post-processing to generate execution plan');
+
+            // 重新生成正确的计划 - 使用 toolChoice: "none" 禁用 function calling
+            const correctedPlan = await engine.planQuery(intent, {
+              toolChoice: "none",
+              systemPrompt: `你是一个 Sui 区块链 DeFi 意图解析器。你必须生成一个多步执行计划。
+
+可用的执行工具（必须从以下工具中选择，不要使用查询类工具）：
+${suiTools.filter(t => !queryTools.includes(t.name)).map(t => `- **${t.name}**: ${t.description?.split('\n')[0] || ''}`).join('\n')}
+
+## 强制规则：
+1. 用户说"卖出/兑换/swap" → 必须用 \`cetus_swap\`
+2. 用户说"存入/deposit" → 必须用 \`navi_deposit\`
+3. 用户说"提取/withdraw" → 必须用 \`navi_withdraw\`
+4. 用户说"转账/转入/发送" → 必须用 \`sui_transfer\`
+5. 如果用户描述包含多个操作，必须生成多个步骤
+6. 如果步骤 B 需要步骤 A 的输出，设置 dependsOn
+7. 金额使用最小单位（如 0.1 SUI = 100000000）
+8. 代币类型使用完整格式（如 "0x2::sui::SUI"）
+
+示例：
+- "在 Cetus 上卖出 0.1 SUI 买入 USDC，然后在 Navi 上存入 USDC"
+  → 步骤1: cetus_swap (coinTypeIn="0x2::sui::SUI", coinTypeOut="0x...::usdc::USDC", amount="100000000")
+  → 步骤2: navi_deposit (coinType="0x...::usdc::USDC", amount="auto", dependsOn=["step1"])
+
+## 输出格式：
+只输出纯 JSON，不要使用 markdown 代码块，不要添加任何解释文字：
+{
+  "summary": "计划摘要",
+  "steps": [
+    { "id": "step_1", "toolName": "cetus_swap", "description": "...", "arguments": {...}, "dependsOn": [] },
+    { "id": "step_2", "toolName": "navi_deposit", "description": "...", "arguments": {...}, "dependsOn": ["step_1"] }
+  ]
+}`,
+              model: model || 'deepseek-chat',
+              temperature: 0.1,
+            });
+
+            if (correctedPlan.steps.length > 0) {
+              plan.steps = correctedPlan.steps;
+              plan.summary = correctedPlan.summary;
+              console.log(`[SuiIntent] Post-processing corrected plan: ${plan.steps.length} steps`);
+            }
+          }
+        }
+
+        console.log(`[SuiIntent] Plan generated: ${plan.steps.length} steps`);
+
+
+        return this.sendJson(res, 200, {
+          success: true,
+          plan: {
+            id: plan.id,
+            summary: plan.summary,
+            steps: plan.steps.map(step => ({
+              id: step.id,
+              toolName: step.toolName,
+              serverName: step.serverName,
+              description: step.description,
+              arguments: step.arguments,
+              dependsOn: step.dependsOn,
+            })),
+          },
+        });
+      } catch (error: any) {
+        console.error('[SuiIntent] Parse error:', error);
+        return this.sendJson(res, 500, {
+          success: false,
+          error: `Failed to parse intent: ${error.message}`,
+        });
+      }
+    }
+
+    if (path === "/api/sui/build-transaction" && method === "POST") {
+      try {
+        const { plan, signerAddress, network: reqNetwork } = JSON.parse(body);
+
+        if (!plan || !plan.steps) {
+          return this.sendJson(res, 400, { success: false, error: 'Missing required field: plan' });
+        }
+
+        // 自动检测网络：优先使用请求中的 network 参数，否则从 plan 中推断，默认 testnet
+        const network = (reqNetwork || plan.network || 'testnet') as 'mainnet' | 'testnet';
+        console.log(`[SuiIntent] Building transaction for network: ${network}`);
+
+        // 使用 CrossProtocolOrchestrator 构建真实 PTB
+        // 将 LLM 解析的步骤（toolName 格式）转换为 CrossProtocolPlan 格式
+        const { CrossProtocolOrchestrator } = await import("../sui/cross-protocol-orchestrator.js");
+        const { getCetusConfig, getNaviConfig, getRpcUrl } = await import("../sui/network-config.js");
+
+        const cetusContracts = getCetusConfig(network);
+        const naviContracts = await getNaviConfig(network);
+
+        const orchestrator = new CrossProtocolOrchestrator({
+          network,
+          contractAddresses: {
+            cetus_package: cetusContracts.cetus_package,
+            cetus_global_config: cetusContracts.global_config_id,
+            cetus_integrate: cetusContracts.integrate_published_at,
+            cetus_pools_id: cetusContracts.pools_id,
+            navi_package: naviContracts.package_id,
+            navi_storage: naviContracts.usdc.poolId,
+            sui_system: '0x3',
+          },
+        });
+        await orchestrator.initialize();
+
+        // 根据网络修正 LLM 返回的 coinType 地址
+        // LLM 可能返回 mainnet 的地址，在 testnet 上需要替换为对应的 testnet 地址
+        // testnet 地址从 Cetus testnet coin_list 动态获取
+        const mainnetToTestnetCoinTypeMap: Record<string, string> = {
+          '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN': '0x14a71d857b34677a7d57e0feb303df1adb515a37780645ab763d42ce8d1a5e48::usdc::USDC',
+          '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN': '0x14a71d857b34677a7d57e0feb303df1adb515a37780645ab763d42ce8d1a5e48::usdt::USDT',
+          '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN': '0xbd22966ee345483662ec067201c5b648fefe97121382836bbcb836d25124ec6c::eth::ETH',
+        };
+
+        // 将 LLM 解析的步骤映射为 CrossProtocolPlan
+        const crossProtocolPlan = {
+          id: plan.id || `plan_${Date.now()}`,
+          query: plan.summary || '',
+          steps: plan.steps.map((s: any) => {
+            const params = { ...(s.arguments || {}) };
+            
+            // 根据网络修正 coinType 地址
+            if (network === 'testnet') {
+              for (const [key, value] of Object.entries(params)) {
+                if (typeof value === 'string' && mainnetToTestnetCoinTypeMap[value]) {
+                  params[key] = mainnetToTestnetCoinTypeMap[value];
+                }
+              }
+            }
+            
+            // 为 Cetus swap 步骤注入 poolId（如果 LLM 没有提供）
+            if (s.toolName === 'cetus_swap' && !params.poolId) {
+              // 使用 Cetus 的 pools_id 作为默认池子 ID
+              params.poolId = cetusContracts.pools_id;
+            }
+            
+            return {
+              id: s.id || `step_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              protocol: s.toolName?.startsWith('cetus') ? 'cetus' as const : s.toolName?.startsWith('navi') ? 'navi' as const : 'sui' as const,
+              action: s.toolName?.replace(/^(cetus|navi|sui)_/, '') || 'swap',
+              description: s.description || `Execute ${s.toolName}`,
+              params,
+              dependsOn: s.dependsOn || [],
+            };
+          }),
+          canMergeToPTB: true,
+          summary: plan.summary || `Execute ${plan.steps.length} step(s)`,
+        };
+
+        // 使用编排器构建真实 PTB
+        // 传递 signerAddress 以便处理未使用的 Coin（_leftoverCoin）
+        const tx = await orchestrator.buildPlanTransaction(crossProtocolPlan, signerAddress);
+        // 设置签名者地址（必须，否则 tx.build() 会报 "Missing transaction sender"）
+        if (signerAddress) {
+          tx.setSender(signerAddress);
+        }
+
+        // 使用 SuiJsonRpcClient 构建交易，它包含 core.resolveTransactionPlugin 方法，
+        // 这是 tx.build() 所必需的（用于解析 UnresolvedObject 对象引用，如 pool 对象）。
+        // 
+        // 使用 onlyTransactionKind=true 构建交易，这样 gasData.payment 保持为 null，
+        // 前端钱包收到后，coreClientResolveTransactionPlugin 检测到 needsPayment = true，
+        // 会自动调用 listCoins 获取用户的 gas coin 并填充。
+        // 
+        // 注意：不能使用 onlyTransactionKind=false，因为 tx.build({ client }) 会调用
+        // resolveTransactionPlugin 自动获取 gas coin 并填充 payment，导致前端钱包
+        // 检测到 payment 有值（needsPayment = false），不会替换 gas coin。
+        // 而 daemon 端获取的 gas coin 的 version/digest 可能已过时，导致链上验证失败。
+        const { SuiJsonRpcClient } = await import('@mysten/sui/jsonRpc');
+        const rpcUrl = getRpcUrl(network);
+        const suiClient = new SuiJsonRpcClient({ url: rpcUrl, network });
+        
+        // 设置 sender 地址（必须，否则 tx.build() 会报 "Missing transaction sender"）
+        if (signerAddress) {
+          tx.setSender(signerAddress);
+        }
+        
+        // 传 client 让 UnresolvedObject 对象引用被解析（如 pool 对象），
+        // 但用 onlyTransactionKind=true 让 gasData.payment 保持为 null。
+        const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
+        
+        // 将 txBytes 转为 base64 返回给前端
+        const txBytesBase64 = Buffer.from(txBytes).toString('base64');
+
+        return this.sendJson(res, 200, {
+          success: true,
+          txBytes: txBytesBase64,
+          steps: plan.steps.length,
+          message: 'Transaction built successfully. Sign with your wallet to execute.',
+        });
+      } catch (error: any) {
+        console.error('[SuiIntent] Build transaction error:', error);
+        return this.sendJson(res, 500, {
+          success: false,
+          error: `Failed to build transaction: ${error.message}`,
         });
       }
     }

@@ -17,6 +17,7 @@ import { handleSecretsRoutes } from './routes/secrets';
 import { handleAuthRoutes } from './routes/auth';
 import { handleNotificationRoutes } from './routes/notifications';
 import { handleAIRoutes } from './routes/ai';
+import { handleSuiIntentRoutes } from './routes/sui-intent';
 
 export class DaemonServer {
   private server: http.Server;
@@ -96,6 +97,7 @@ export class DaemonServer {
     if (await handleAuthRoutes(ctx)) return;
     if (await handleNotificationRoutes(ctx)) return;
     if (await handleAIRoutes(ctx)) return;
+    if (await handleSuiIntentRoutes(ctx)) return;
 
     this.sendJson(res, 404, { error: 'Not Found', path });
   }

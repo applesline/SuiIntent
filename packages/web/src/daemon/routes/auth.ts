@@ -11,7 +11,7 @@ export async function authMiddleware(req: http.IncomingMessage, res: http.Server
   const path = parsedUrl.pathname;
   
   // Skip auth for public endpoints
-  if (path === '/api/status' || path === '/api/auth/token') {
+  if (path === '/api/status' || path === '/api/auth/token' || path === '/api/sui/parse-intent' || path === '/api/sui/build-transaction') {
     return true;
   }
   

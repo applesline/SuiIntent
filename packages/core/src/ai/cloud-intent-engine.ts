@@ -205,6 +205,7 @@ export class CloudIntentEngine {
       systemPrompt?: string;
       model?: string;
       temperature?: number;
+      toolChoice?: "auto" | "none";
     },
   ): Promise<ToolExecutionPlan> {
     logger.info(
@@ -220,6 +221,9 @@ export class CloudIntentEngine {
     const userMessage = this.buildUserMessage(query);
 
     try {
+      // Determine tool choice mode
+      const toolChoice = options?.toolChoice || "auto";
+
       // Call LLM with function calling
       const response = await this.llmClient.chat({
         messages: [
@@ -227,7 +231,7 @@ export class CloudIntentEngine {
           { role: "user", content: userMessage },
         ],
         temperature: options?.temperature,
-        tools: this.availableTools.map((tool) => ({
+        tools: toolChoice === "none" ? undefined : this.availableTools.map((tool) => ({
           type: "function" as const,
           function: {
             name: tool.name,
@@ -235,7 +239,7 @@ export class CloudIntentEngine {
             parameters: tool.inputSchema || { type: "object", properties: {} },
           },
         })),
-        toolChoice: "auto",
+        toolChoice,
       });
 
       // Parse the response into a plan
@@ -618,6 +622,89 @@ Please generate a structured execution plan to fulfill this request.`;
   }
 
   /**
+   * Extract JSON object from text that may contain markdown code blocks,
+   * surrounding explanatory text, or comments.
+   *
+   * Handles formats like:
+   * - ```json\n{...}\n```
+   * - ```\n{...}\n```
+   * - { "summary": "...", "steps": [...] }
+   * - Here is the plan: { "summary": "...", "steps": [...] }
+   */
+  private extractJsonFromText(text: string): Record<string, unknown> | null {
+    if (!text) return null;
+
+    // Strategy 1: Try to extract from markdown code block (```json ... ``` or ``` ... ```)
+    const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)```/;
+    const codeBlockMatch = text.match(codeBlockRegex);
+    if (codeBlockMatch) {
+      const jsonStr = codeBlockMatch[1].trim();
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (parsed && typeof parsed === 'object') {
+          logger.debug('[CloudIntentEngine] Successfully parsed JSON from markdown code block');
+          return parsed as Record<string, unknown>;
+        }
+      } catch (e) {
+        logger.debug(`[CloudIntentEngine] Failed to parse JSON from code block: ${(e as Error).message}`);
+      }
+    }
+
+    // Strategy 2: Try to find JSON object by scanning for { and matching braces
+    // This handles cases where JSON is embedded in surrounding text
+    const jsonObjectRegex = /\{[\s\S]*?\}/g;
+    const jsonMatches = text.match(jsonObjectRegex);
+    if (jsonMatches) {
+      for (const candidate of jsonMatches) {
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            // Check if it looks like a plan (has steps or summary)
+            if (parsed.steps || parsed.summary) {
+              logger.debug('[CloudIntentEngine] Successfully parsed JSON from embedded text');
+              return parsed as Record<string, unknown>;
+            }
+          }
+        } catch {
+          // Try next candidate
+        }
+      }
+    }
+
+    // Strategy 3: Try direct JSON.parse on the whole text (most common case)
+    try {
+      const trimmed = text.trim();
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        logger.debug('[CloudIntentEngine] Successfully parsed JSON from direct text');
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Not valid JSON
+    }
+
+    // Strategy 4: Try to find the first { and last } and parse that substring
+    // This handles cases where there's text before/after the JSON
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      const jsonCandidate = text.substring(firstBrace, lastBrace + 1);
+      try {
+        const parsed = JSON.parse(jsonCandidate);
+        if (parsed && typeof parsed === 'object') {
+          logger.debug('[CloudIntentEngine] Successfully parsed JSON from brace-delimited text');
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Not valid JSON
+      }
+    }
+
+    logger.warn('[CloudIntentEngine] Failed to extract JSON from response text');
+    return null;
+  }
+
+  /**
    * Parse LLM response into a ToolExecutionPlan
    *
    * Handles both the LLMClientResponse format (with toolCalls containing
@@ -668,31 +755,32 @@ Please generate a structured execution plan to fulfill this request.`;
 
       plan.summary = `Plan with ${plan.steps.length} steps using ${plan.steps.map((s) => s.toolName).join(", ")}`;
     } else if (response.text) {
-      // Try to parse JSON from the response text
-      try {
-        const parsed = JSON.parse(response.text);
-        if (parsed.steps && Array.isArray(parsed.steps)) {
-          plan.steps = parsed.steps.map(
-            (step: Record<string, unknown>, index: number) => ({
-              id: (step.id as string) || `step_${index + 1}`,
-              toolName: step.toolName as string,
-              serverName:
-                (step.serverName as string) ||
-                toolServerMap.get(step.toolName as string),
-              description: (step.description as string) || `Step ${index + 1}`,
-              arguments: (step.arguments as Record<string, unknown>) || {},
-              dependsOn: (step.dependsOn as string[]) || [],
-            }),
-          );
-          plan.summary =
-            (parsed.summary as string) ||
-            `Plan with ${plan.steps.length} steps`;
-        } else {
-          plan.summary = response.text.substring(0, 200);
-        }
-      } catch {
-        // Not JSON, use text as summary
+      // Try to extract JSON from the response text using robust extraction
+      const parsed = this.extractJsonFromText(response.text);
+      if (parsed && parsed.steps && Array.isArray(parsed.steps)) {
+        plan.steps = parsed.steps.map(
+          (step: Record<string, unknown>, index: number) => ({
+            id: (step.id as string) || `step_${index + 1}`,
+            toolName: step.toolName as string,
+            serverName:
+              (step.serverName as string) ||
+              toolServerMap.get(step.toolName as string),
+            description: (step.description as string) || `Step ${index + 1}`,
+            arguments: (step.arguments as Record<string, unknown>) || {},
+            dependsOn: (step.dependsOn as string[]) || [],
+          }),
+        );
+        plan.summary =
+          (parsed.summary as string) ||
+          `Plan with ${plan.steps.length} steps`;
+      } else if (parsed && !parsed.steps) {
+        // Parsed JSON but no steps field - use as summary
         plan.summary = response.text.substring(0, 200);
+        logger.warn(`[CloudIntentEngine] Parsed JSON has no 'steps' field: ${JSON.stringify(parsed).substring(0, 200)}`);
+      } else {
+        // Could not parse JSON at all
+        plan.summary = response.text.substring(0, 200);
+        logger.warn(`[CloudIntentEngine] Could not parse JSON from response text: "${response.text.substring(0, 200)}..."`);
       }
     }
 
@@ -702,6 +790,7 @@ Please generate a structured execution plan to fulfill this request.`;
   /**
    * Parse function calling response from LLMClientResponse format
    */
+
   private parseFunctionCallingResponse(
     response: LLMClientResponse,
   ): FunctionCallingResult {

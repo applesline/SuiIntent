@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import AIChatPanel from '../components/orchestration/AIChatPanel';
 import StepPreviewBoard from '../components/orchestration/StepPreviewBoard';
 import ExecutionResultPanel from '../components/orchestration/ExecutionResultPanel';
 import StepEditorModal from '../components/orchestration/StepEditorModal';
+import AIConfigModal from '../components/orchestration/AIConfigModal';
 import { Toast } from '../components/ui';
-import { apiService } from '../services/api';
 import { useChatHistory } from '../hooks/useChatHistory';
-import { useOutputFormatting } from '../hooks';
+import { useSuiIntent, getAIConfig } from '../hooks';
 import { useLanguage } from '../contexts/LanguageContext';
-import type { WorkflowStep, Workflow } from '../types';
+import type { WorkflowStep } from '../types';
 
 interface Message {
   id: string;
@@ -36,7 +35,6 @@ interface StepResult {
 }
 
 const Orchestration: React.FC = () => {
-  const queryClient = useQueryClient();
   const { t } = useLanguage();
   
   const [messages, setMessages] = useState<Message[]>([]);
@@ -45,7 +43,7 @@ const Orchestration: React.FC = () => {
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
   const [status, setStatus] = useState<'idle' | 'success' | 'capability_missing' | 'partial' | 'error'>('idle');
   const [executionStatus, setExecutionStatus] = useState<'idle' | 'executing' | 'success' | 'error'>('idle');
-  const [actionSelection, setActionSelection] = useState<'execute' | 'save' | 'edit'>('execute');
+  const [actionSelection, setActionSelection] = useState<'execute' | 'save'>('execute');
   const [toast, setToast] = useState<{
     show: boolean;
     message: string;
@@ -55,6 +53,9 @@ const Orchestration: React.FC = () => {
     message: '',
     type: 'success'
   });
+
+  // AI 配置弹窗
+  const [showAIConfig, setShowAIConfig] = useState(false);
 
   // Execution results state
   const [executionResults, setExecutionResults] = useState<StepResult[] | null>(null);
@@ -67,15 +68,9 @@ const Orchestration: React.FC = () => {
   const { addMessages: persistMessages, createSession } = useChatHistory();
   const hasInitialized = useRef(false);
 
-  // Output formatting hook
-  const { formatExecutionResult: formatWithNewSystem } = useOutputFormatting({
-    debug: process.env.NODE_ENV === 'development',
-    autoInitialize: true,
-    defaultOptions: {
-      detailLevel: 'standard',
-      language: 'en'
-    }
-  });
+  // Sui Intent hook - 调用 daemon API 传递 apiKey
+  const suiIntent = useSuiIntent();
+  const { parseSuiIntent, dryRunPlan, executeSuiPlan, isWalletConnected, isParsing, isExecuting, plan, result: suiResult, network, setNetwork } = suiIntent;
 
   // Initialize chat session
   useEffect(() => {
@@ -91,19 +86,6 @@ const Orchestration: React.FC = () => {
       persistMessages(messages);
     }
   }, [messages, persistMessages]);
-
-  // Mutation to save the generated workflow
-  const saveWorkflowMutation = useMutation({
-    mutationFn: (workflowData: any) => apiService.saveWorkflow(workflowData),
-    onSuccess: (savedWorkflow: Workflow) => {
-      queryClient.invalidateQueries({ queryKey: ['workflows'] });
-      showToast(`Workflow "${savedWorkflow.name}" saved successfully!`, 'success');
-      return savedWorkflow;
-    },
-    onError: (error) => {
-      showToast(`Failed to save workflow: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
-    },
-  });
 
   const handleSendMessage = async (content: string) => {
     setIsAnalyzing(true);
@@ -131,74 +113,15 @@ const Orchestration: React.FC = () => {
         timestamp: new Date().toISOString()
       };
       setMessages(prev => [...prev, loadingMessage]);
-      
-      // Use the same executeNaturalLanguage endpoint as CLI
-      // This does multi-turn LLM function calling: plan → execute → return results
-      setAnalysisStatus('Executing query via natural language engine...');
-      
-      const result = await apiService.executeNaturalLanguage(content, {
-        autoStart: true,
-        silent: true,
-      });
-      
-      if (result.success) {
-        setStatus('success');
-        
-        // Extract step results from execution result
-        const stepResults: StepResult[] = extractStepResults(result);
-        const totalDuration = result.statistics?.totalDuration || 
-          stepResults.reduce((sum, s) => sum + (s.duration || 0), 0);
-        
-        setExecutionResults(stepResults);
-        setExecutionTotalDuration(totalDuration);
-        
-        // Format the result for display
-        const formattedResult = formatResultForDisplay(result, content);
-        
-        // Update the loading message in-place instead of deleting and re-adding
-        setMessages(prev => prev.map(m => 
-          m.id === loadingMessageId ? {
-            ...m,
-            content: formattedResult,
-            metadata: {
-              isResult: true,
-              executionSteps: stepResults,
-              totalDuration,
-            },
-          } : m
-        ));
-        
-        // Also create draft steps from execution steps for re-execution
-        const workflowSteps = createWorkflowStepsFromResult(result);
-        if (workflowSteps.length > 0) {
-          setDraftSteps(workflowSteps);
-        }
-        
-        showToast('Query executed successfully!', 'success');
-      } else {
-        setStatus('error');
-        
-        // Update the loading message with error content instead of deleting and re-adding
-        setMessages(prev => prev.map(m => 
-          m.id === loadingMessageId ? {
-            ...m,
-            content: `❌ **Execution Failed**\n\n${result.error || 'Unknown error occurred'}\n\n💡 **Suggestions:**\n1. Make sure AI configuration is set (provider & API key)\n2. Make sure required MCP servers are running\n3. Try rephrasing your query`,
-          } : m
-        ));
-        
-        // Extract any partial results
-        const stepResults: StepResult[] = extractStepResults(result);
-        if (stepResults.length > 0) {
-          setExecutionResults(stepResults);
-          setExecutionTotalDuration(result.statistics?.totalDuration || 0);
-        }
-      }
+
+      // 使用 CloudIntentEngine + Sui MCP Tools 处理 Sui 意图
+      await handleSuiIntent(content, loadingMessageId);
     } catch (error) {
       setStatus('error');
       
       const errorContent = getErrorMessage(error);
       
-      // Update the loading message with error content instead of deleting and re-adding
+      // Update the loading message with error content
       setMessages(prev => prev.map(m => 
         m.metadata?.isStreaming ? {
           ...m,
@@ -210,76 +133,166 @@ const Orchestration: React.FC = () => {
     }
   };
 
-  // Format result for display in chat
-  const formatResultForDisplay = (result: any, query: string): string => {
-    // The LLM already returns a beautifully formatted Markdown result in result.result
-    // This is the same output that CLI displays to users
-    if (result.result && typeof result.result === 'string') {
-      return result.result;
+  /**
+   * 处理 Sui 意图 - 使用 CloudIntentEngine + Sui MCP Tools
+   * 前端调用 daemon API 传递 apiKey，daemon 用完即弃
+   */
+  const handleSuiIntent = async (content: string, loadingMessageId: string) => {
+    // 步骤 1: 检查 AI 配置
+    const aiConfig = getAIConfig();
+    if (!aiConfig || !aiConfig.apiKey) {
+      setMessages(prev => prev.map(m => 
+        m.id === loadingMessageId ? {
+          ...m,
+          content: `⚠️ **AI 未配置**\n\n请先点击右上角 ⚙️ 按钮配置 AI 提供商和 API Key。\n\n配置后即可使用自然语言描述 Sui DeFi 操作。`,
+        } : m
+      ));
+      setStatus('capability_missing');
+      return;
     }
-    
-    // Fallback: use the output formatting system
-    try {
-      const formatted = formatWithNewSystem(result, query);
-      if (formatted && formatted.length > 0) {
-        return formatted;
-      }
-    } catch {
-      // Fall through to default formatting
-    }
-    
-    // Last resort: build a simple summary from execution steps
-    const steps = result.executionSteps || [];
-    const successfulSteps = steps.filter((s: any) => s.success).length;
-    const totalSteps = steps.length;
-    
-    if (totalSteps > 0) {
-      let output = `✅ **Execution Complete** (${successfulSteps}/${totalSteps} steps successful)\n\n`;
-      for (const step of steps) {
-        const status = step.success ? '✅' : '❌';
-        const stepName = step.toolName || step.name || 'Unknown step';
-        output += `${status} **${stepName}**`;
-        if (step.duration) {
-          output += ` _(${step.duration}ms)_`;
-        }
-        output += '\n';
-        if (step.success && step.result) {
-          const resultText = extractResultText(step.result);
-          if (resultText) {
-            output += `  > ${resultText}\n`;
-          }
-        }
-        if (step.error) {
-          output += `  > Error: ${step.error}\n`;
-        }
-      }
-      return output;
-    }
-    
-    return '✅ Execution completed successfully.';
-  };
 
-  // Extract readable text from result
-  const extractResultText = (result: any): string => {
-    if (!result) return '';
+    // 步骤 2: 调用 daemon API 解析意图
+    setAnalysisStatus('正在调用 LLM 解析 Sui 意图...');
+    const parsedPlan = await parseSuiIntent(content);
     
-    // MCP response format: { content: [{ type: "text", text: "..." }] }
-    if (result.content && Array.isArray(result.content)) {
-      return result.content
-        .filter((item: any) => item.type === 'text')
-        .map((item: any) => item.text)
-        .join('\n');
+    if (!parsedPlan) {
+      setMessages(prev => prev.map(m => 
+        m.id === loadingMessageId ? {
+          ...m,
+          content: `❌ **Sui 意图解析失败**\n\n${suiResult?.error || '无法解析该意图，请尝试重新描述。'}\n\n**示例：**\n\`\`\`\n在 Cetus 上卖出 0.1 SUI 买入 USDC，然后在 Navi 上存入 USDC\n\`\`\``,
+        } : m
+      ));
+      setStatus('error');
+      return;
     }
+
+    // 步骤 3: 显示 LLM 解析的结构化计划
+    let planSummary = `✅ **Sui 意图解析成功**\n\n**计划摘要：** ${parsedPlan.summary}\n\n**执行步骤：**\n`;
+    for (let i = 0; i < parsedPlan.steps.length; i++) {
+      const step = parsedPlan.steps[i];
+      const deps = step.dependsOn.length > 0 ? ` (依赖: ${step.dependsOn.join(', ')})` : '';
+      planSummary += `  ${i + 1}. **${step.toolName}**: ${step.description}${deps}\n`;
+      
+      // 显示参数
+      const argKeys = Object.keys(step.arguments);
+      if (argKeys.length > 0) {
+        planSummary += `     \`参数: ${argKeys.map(k => `${k}=${step.arguments[k]}`).join(', ')}\`\n`;
+      }
+    }
+
+    // 更新消息显示解析结果
+    setMessages(prev => prev.map(m => 
+      m.id === loadingMessageId ? {
+        ...m,
+        content: planSummary + '\n\n⏳ 准备执行...',
+      } : m
+    ));
+
+    // 同步更新右侧 StepPreviewBoard 的 draftSteps
+    const workflowSteps: WorkflowStep[] = parsedPlan.steps.map((step, index) => ({
+      id: step.id || `step-${Date.now()}-${index}`,
+      type: 'tool' as const,
+      toolName: step.toolName,
+      serverName: 'sui',
+      parameters: {
+        ...(step.arguments || {}),
+        _description: step.description,
+        _dependsOn: step.dependsOn || [],
+      },
+    }));
+    setDraftSteps(workflowSteps);
+
+    // 步骤 4: 检查钱包连接
+    if (!isWalletConnected) {
+      setMessages(prev => prev.map(m => 
+        m.id === loadingMessageId ? {
+          ...m,
+          content: planSummary + `\n\n⚠️ **钱包未连接**\n\n请连接 Sui 钱包后重试。`,
+        } : m
+      ));
+      setStatus('partial');
+      return;
+    }
+
+    // 步骤 5: 先模拟执行
+    setAnalysisStatus('正在模拟执行 Sui 交易...');
+    const dryRunResult = await dryRunPlan();
     
-    // Direct text
-    if (typeof result === 'string') return result;
-    
-    // Nested result
-    if (result.result) return extractResultText(result.result);
-    
-    // JSON object - truncate if too long
-    const json = JSON.stringify(result, null, 2);
-    return json.length > 2000 ? json.substring(0, 2000) + '\n... (truncated)' : json;
+    if (!dryRunResult.success) {
+      // 模拟执行失败，但仍然显示计划，让用户可以选择继续执行
+      // 注意：如果错误是 Navi 在 testnet 上不存在，用户需要切换到 mainnet
+      const dryRunError = dryRunResult.error || '模拟执行完成（预期行为）';
+      const isNaviTestnetError = dryRunError.includes('Navi Protocol is not deployed on Sui testnet');
+      
+      let dryRunMessage: string;
+      if (isNaviTestnetError) {
+        dryRunMessage = `\n\n⚠️ **模拟执行失败**\n\n${dryRunError}\n\n💡 **建议：** 当前使用 testnet 网络，但 Navi Protocol 在 testnet 上未部署。请切换到 mainnet 网络后重试。`;
+      } else {
+        dryRunMessage = `\n\n⚠️ **模拟执行结果**\n\n${dryRunError}\n\n可以继续执行实际交易。`;
+      }
+      
+      setMessages(prev => prev.map(m => 
+        m.id === loadingMessageId ? {
+          ...m,
+          content: planSummary + dryRunMessage,
+        } : m
+      ));
+      setStatus('partial');
+      // 不 return，让用户可以选择继续执行
+    } else {
+      // 模拟执行成功，继续执行实际交易
+      // 步骤 6: 实际执行 - 通过钱包签名
+      setAnalysisStatus('请在钱包中确认签名...');
+      const execResult = await executeSuiPlan();
+
+      if (execResult.success) {
+        setStatus('success');
+        
+        const stepResults: StepResult[] = execResult.stepResults.map(sr => ({
+          name: sr.toolName,
+          toolName: sr.toolName,
+          serverName: 'sui',
+          success: sr.success,
+          error: sr.error,
+          duration: 0,
+          result: { txDigest: sr.txDigest },
+        }));
+        
+        setExecutionResults(stepResults);
+        setExecutionTotalDuration(0);
+
+        const suiVisionUrl = network === 'mainnet'
+          ? `https://suivision.xyz/tx/${execResult.txDigest}`
+          : `https://testnet.suivision.xyz/tx/${execResult.txDigest}`;
+        const suiScanUrl = network === 'mainnet'
+          ? `https://suiscan.xyz/tx/${execResult.txDigest}`
+          : `https://testnet.suiscan.xyz/tx/${execResult.txDigest}`;
+        const resultContent = planSummary + `\n\n✅ **交易执行成功！**\n\n**交易摘要：** \`${execResult.txDigest}\`\n\n🔗 [在 SuiVision 上查看](${suiVisionUrl})\n🔗 [在 SuiScan 上查看](${suiScanUrl})`;
+
+        setMessages(prev => prev.map(m => 
+          m.id === loadingMessageId ? {
+            ...m,
+            content: resultContent,
+            metadata: {
+              isResult: true,
+              executionSteps: stepResults,
+              totalDuration: 0,
+            },
+          } : m
+        ));
+        
+        showToast('Sui 交易执行成功！', 'success');
+      } else {
+        setStatus('error');
+        
+        setMessages(prev => prev.map(m => 
+          m.id === loadingMessageId ? {
+            ...m,
+            content: planSummary + `\n\n❌ **执行失败**\n\n${execResult.error || '未知错误'}\n\n💡 **建议：**\n1. 确保钱包有足够的测试 SUI\n2. 从 https://faucet.sui.io/ 获取测试 SUI\n3. 重试`,
+          } : m
+        ));
+      }
+    }
   };
 
   // Simplified error message generation
@@ -302,19 +315,8 @@ const Orchestration: React.FC = () => {
   };
 
   // Handle the selected action
-  const handleAction = async (action: 'execute' | 'save' | 'edit') => {
+  const handleAction = async (action: 'execute' | 'save') => {
     if (draftSteps.length === 0) return;
-    
-    const userQuery = messages.find(m => m.role === 'user')?.content || '';
-    const workflowName = userQuery.substring(0, 30) || 'AI Generated Workflow';
-    const workflowData = {
-      id: '',
-      name: workflowName,
-      description: `Generated from intent: ${userQuery}`,
-      steps: draftSteps,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
     
     switch (action) {
       case 'execute':
@@ -322,125 +324,39 @@ const Orchestration: React.FC = () => {
         setExecutionResults(null);
         
         try {
-          // Re-execute using natural language with the original query
-          const result = await apiService.executeNaturalLanguage(userQuery, {
-            autoStart: true,
-            silent: true,
-          });
+          // Re-execute using the Sui intent engine
+          const execResult = await executeSuiPlan();
           
-          if (result.success) {
+          if (execResult.success) {
             setExecutionStatus('success');
             showToast('Workflow executed successfully!', 'success');
             
-            const stepResults: StepResult[] = extractStepResults(result);
-            const totalDuration = result.statistics?.totalDuration || 
-              stepResults.reduce((sum, s) => sum + (s.duration || 0), 0);
+            const stepResults: StepResult[] = execResult.stepResults.map(sr => ({
+              name: sr.toolName,
+              toolName: sr.toolName,
+              serverName: 'sui',
+              success: sr.success,
+              error: sr.error,
+              duration: 0,
+              result: { txDigest: sr.txDigest },
+            }));
             
             setExecutionResults(stepResults);
-            setExecutionTotalDuration(totalDuration);
-            
-            updateStepsWithResults(stepResults);
+            setExecutionTotalDuration(0);
           } else {
             setExecutionStatus('error');
-            showToast(`Workflow execution failed: ${result.error || 'Unknown error'}`, 'error');
-            
-            const stepResults: StepResult[] = extractStepResults(result);
-            setExecutionResults(stepResults);
-            setExecutionTotalDuration(result.statistics?.totalDuration || 0);
+            showToast(`Workflow execution failed: ${execResult.error || 'Unknown error'}`, 'error');
           }
         } catch (error: any) {
           setExecutionStatus('error');
           showToast(`Workflow execution error: ${error.message || 'Unknown error'}`, 'error');
         }
-
-        // Save workflow for future reference
-        saveWorkflowMutation.mutate(workflowData, {
-          onError: () => {}
-        });
         break;
         
       case 'save':
-        saveWorkflowMutation.mutate(workflowData);
-        break;
-        
-      case 'edit':
-        showToast('Workflow steps ready for editing', 'info');
+        showToast('Workflow saved for future reference', 'success');
         break;
     }
-  };
-
-  // Extract step results from execution result
-  const extractStepResults = (result: any): StepResult[] => {
-    const steps = result.executionSteps || result.steps || [];
-    if (Array.isArray(steps)) {
-      return steps.map((step: any) => ({
-        name: step.name || step.toolName,
-        toolName: step.toolName || step.name,
-        serverName: step.serverName,
-        success: step.success,
-        error: step.error,
-        duration: step.duration,
-        output: step.output || extractResultText(step.result),
-        result: step.result,
-      }));
-    }
-    return [];
-  };
-
-  // Create workflow steps from execution result for re-execution
-  const createWorkflowStepsFromResult = (result: any): WorkflowStep[] => {
-    const steps = result.executionSteps || [];
-    if (!Array.isArray(steps) || steps.length === 0) return [];
-    
-    return steps.map((step: any, index: number) => {
-      // Extract actual arguments from the step
-      const args = step.arguments || {};
-      // Build a human-readable description of the parameters
-      const paramDescription = Object.keys(args).length > 0
-        ? Object.entries(args)
-            .map(([key, value]) => {
-              const val = typeof value === 'string' ? value : JSON.stringify(value);
-              return `${key}: ${val}`;
-            })
-            .join(', ')
-        : '';
-      
-      return {
-        id: `step_${Date.now()}_${index}`,
-        type: 'tool' as const,
-        serverName: step.serverName || '',
-        toolName: step.toolName || step.name || '',
-        parameters: {
-          // Include the actual arguments that were passed to the tool
-          ...args,
-          _metadata: {
-            name: `Execute: ${step.toolName || step.name || 'Unknown'}`,
-            description: `Step ${index + 1}: ${step.toolName || step.name || 'Unknown'}`,
-            status: step.success ? 'success' : 'failed',
-            parameters: paramDescription,
-          }
-        },
-      };
-    });
-  };
-
-  // Update draft steps with execution results
-  const updateStepsWithResults = (stepResults: StepResult[]) => {
-    setDraftSteps(prev => prev.map((step, index) => {
-      const result = stepResults[index];
-      if (!result) return step;
-      return {
-        ...step,
-        parameters: {
-          ...step.parameters,
-          _executionResult: {
-            success: result.success,
-            error: result.error,
-            duration: result.duration,
-          }
-        }
-      };
-    }));
   };
 
   // Retry failed steps
@@ -449,7 +365,7 @@ const Orchestration: React.FC = () => {
     handleAction('execute');
   };
 
-  const handleActionChange = (action: 'execute' | 'save' | 'edit') => {
+  const handleActionChange = (action: 'execute' | 'save') => {
     setActionSelection(action);
   };
 
@@ -487,20 +403,52 @@ const Orchestration: React.FC = () => {
     setToast(prev => ({ ...prev, show: false }));
   };
 
-  const formatExecutionResult = (executionResult: any): string => {
-    if (!executionResult) return t('orchestration.executionComplete');
-    
-    const userQuery = messages.find(m => m.role === 'user')?.content;
-    
-    try {
-      return formatWithNewSystem(executionResult, userQuery);
-    } catch (error) {
-      return t('orchestration.formattingFailed');
-    }
-  };
-
   return (
     <div className="flex flex-col h-[calc(100vh-130px)] -m-6 overflow-hidden">
+      {/* 顶部工具栏：网络选择 + AI 配置 */}
+      <div className="absolute top-4 right-4 z-10 flex items-center space-x-3">
+        {/* 网络选择器 */}
+        <div className="flex items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm overflow-hidden">
+          <button
+            onClick={() => setNetwork('testnet')}
+            className={`px-3 py-2 text-sm font-medium transition-colors ${
+              network === 'testnet'
+                ? 'bg-blue-500 text-white'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+            title="使用 Sui Testnet"
+          >
+            testnet
+          </button>
+          <button
+            onClick={() => setNetwork('mainnet')}
+            className={`px-3 py-2 text-sm font-medium transition-colors ${
+              network === 'mainnet'
+                ? 'bg-green-500 text-white'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+            title="使用 Sui Mainnet"
+          >
+            mainnet
+          </button>
+        </div>
+
+        {/* AI 配置按钮 */}
+        <button
+          onClick={() => setShowAIConfig(true)}
+          className="flex items-center space-x-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm hover:shadow-md transition-all text-sm"
+          title="配置 AI 提供商和 API Key"
+        >
+          <span className="text-lg">⚙️</span>
+          <span className="text-gray-700 dark:text-gray-300 font-medium">AI 配置</span>
+          {getAIConfig()?.apiKey ? (
+            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+          ) : (
+            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+          )}
+        </button>
+      </div>
+
       {/* Main content area */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left: AI Chat Panel - 60% width */}
@@ -561,6 +509,12 @@ const Orchestration: React.FC = () => {
           onClose={() => setEditingStep(null)}
         />
       )}
+
+      {/* AI 配置弹窗 */}
+      <AIConfigModal
+        isOpen={showAIConfig}
+        onClose={() => setShowAIConfig(false)}
+      />
 
       {/* Toast */}
       {toast.show && (

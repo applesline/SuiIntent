@@ -10,7 +10,6 @@ import {
   AlertCircle,
   Play,
   Save,
-  Edit,
   ChevronDown,
   Info
 } from 'lucide-react';
@@ -26,8 +25,8 @@ interface StepPreviewBoardProps {
   onDeleteStep: (id: string) => void;
   onEditStep?: (step: WorkflowStep) => void;
   onAddStep?: () => void;
-  actionSelection?: 'execute' | 'save' | 'edit';
-  onActionChange?: (action: 'execute' | 'save' | 'edit') => void;
+  actionSelection?: 'execute' | 'save';
+  onActionChange?: (action: 'execute' | 'save') => void;
   onActionExecute?: () => void;
   isExecuting?: boolean;
 }
@@ -64,19 +63,11 @@ const StepPreviewBoard: React.FC<StepPreviewBoardProps> = ({
       color: 'from-green-500 to-green-600',
       iconColor: 'text-green-600'
     },
-    { 
-      value: 'edit' as const, 
-      label: t('orchestration.editSteps'), 
-      icon: Edit, 
-      description: t('orchestration.editStepsDesc'), 
-      color: 'from-blue-500 to-blue-600',
-      iconColor: 'text-blue-600'
-    }
   ];
   
   const selectedAction = actionOptions.find(opt => opt.value === actionSelection) || actionOptions[0];
   
-  const handleActionSelect = (action: 'execute' | 'save' | 'edit') => {
+  const handleActionSelect = (action: 'execute' | 'save') => {
     if (onActionChange) {
       onActionChange(action);
     }

@@ -10,6 +10,51 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./sui": {
+      "types": "./dist/sui/index.d.ts",
+      "import": "./dist/sui/index.js",
+      "default": "./dist/sui/index.js"
+    },
+    "./sui/cross-protocol-orchestrator": {
+      "types": "./dist/sui/cross-protocol-orchestrator.d.ts",
+      "import": "./dist/sui/cross-protocol-orchestrator.js",
+      "default": "./dist/sui/cross-protocol-orchestrator.js"
+    },
+    "./sui/ptb-builder": {
+      "types": "./dist/sui/ptb-builder.d.ts",
+      "import": "./dist/sui/ptb-builder.js",
+      "default": "./dist/sui/ptb-builder.js"
+    },
+    "./sui/types": {
+      "types": "./dist/sui/types.d.ts",
+      "import": "./dist/sui/types.js",
+      "default": "./dist/sui/types.js"
+    },
+    "./sui/mcp-server": {
+      "types": "./dist/sui/mcp-server.d.ts",
+      "import": "./dist/sui/mcp-server.js",
+      "default": "./dist/sui/mcp-server.js"
+    },
+    "./sui/adapters/types": {
+      "types": "./dist/sui/adapters/types.d.ts",
+      "import": "./dist/sui/adapters/types.js",
+      "default": "./dist/sui/adapters/types.js"
+    },
+    "./sui/adapters/cetus-adapter": {
+      "types": "./dist/sui/adapters/cetus-adapter.d.ts",
+      "import": "./dist/sui/adapters/cetus-adapter.js",
+      "default": "./dist/sui/adapters/cetus-adapter.js"
+    },
+    "./sui/adapters/navi-adapter": {
+      "types": "./dist/sui/adapters/navi-adapter.d.ts",
+      "import": "./dist/sui/adapters/navi-adapter.js",
+      "default": "./dist/sui/adapters/navi-adapter.js"
+    },
+    "./sui/adapters/sui-adapter": {
+      "types": "./dist/sui/adapters/sui-adapter.d.ts",
+      "import": "./dist/sui/adapters/sui-adapter.js",
+      "default": "./dist/sui/adapters/sui-adapter.js"
     }
   },
   "files": [
@@ -26,6 +71,7 @@
     "dist/types",
     "dist/utils",
     "dist/workflow",
+    "dist/sui",
     "dist/index.js",
     "dist/index.js.map",
     "dist/index.d.ts",
@@ -35,7 +81,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "jest",
+    "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest",
     "lint": "eslint src",
     "format": "prettier --write src/**/*.ts",
     "clean": "rm -rf dist",
@@ -62,14 +108,19 @@
   },
   "homepage": "https://github.com/mcpilotx/intentorch#readme",
   "dependencies": {
+    "@cetusprotocol/cetus-sui-clmm-sdk": "^5.4.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@mysten/sui": "^2.16.0",
     "axios": "^1.7.9",
     "chalk": "^4.1.2",
     "jexl": "^2.3.0",
     "lodash": "^4.18.1",
+    "@naviprotocol/lending": "^1.4.3",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.2",
     "@types/jest": "^29.5.14",
     "@types/jexl": "^2.3.4",
     "@types/lodash": "^4.17.24",
@@ -77,6 +128,7 @@
     "@types/uuid": "^10.0.0",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
+    "babel-jest": "^30.3.0",
     "eslint": "^9.17.0",
     "jest": "^29.7.0",
     "prettier": "^3.4.2",

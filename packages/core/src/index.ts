@@ -104,6 +104,9 @@ export async function initialize(_config?: Record<string, unknown>) {
   };
 }
 
+// ==================== Sui DeFi Modules ====================
+export { getSuiMCPTools } from './sui/sui-mcp-tools.js';
+
 // ==================== Utility Function Exports ====================
 export { getProcessManager } from './process-manager/manager.js';
 export { getRegistryClient } from './registry/client.js';
