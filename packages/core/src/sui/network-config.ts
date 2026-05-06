@@ -28,6 +28,10 @@ export interface CetusContractConfig {
   global_config_id: string;
   /** pools_id（池子列表 ID） */
   pools_id: string;
+  /** coin_list_id（代币列表对象 ID） */
+  coin_list_id: string;
+  /** coin_list_handle（代币列表动态字段句柄） */
+  coin_list_handle: string;
 }
 
 /** Navi 合约配置（从 Navi Open API 动态获取） */
@@ -77,6 +81,8 @@ const CETUS_MAINNET: CetusContractConfig = {
   integrate_published_at: '0xb2db7142fa83210a7d78d9c12ac49c043b3cbbd482224fea6e3da00aa5a5ae2d',
   global_config_id: '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f',
   pools_id: '0xf699e7f2276f5c9a75944b37a0c5b5d9ddfd2471bf6242483b03ab2887d198d0',
+  coin_list_id: '0x8cbc11d9e10140db3d230f50b4d30e9b721201c0083615441707ffec1ef77b23',
+  coin_list_handle: '0x49136005e90e28c4695419ed4194cc240603f1ea8eb84e62275eaff088a71063',
 };
 
 /** Navi Mainnet 配置（从 navi-sdk 提取） */
@@ -112,6 +118,8 @@ const CETUS_TESTNET: CetusContractConfig = {
   integrate_published_at: '0x19dd42e05fa6c9988a60d30686ee3feb776672b5547e328d6dab16563da65293',
   global_config_id: '0x9774e359588ead122af1c7e7f64e14ade261cfeecdb5d0eb4a5b3b4c8ab8bd3e',
   pools_id: '0x50eb61dd5928cec5ea04711a2e9b72e5237e79e9fbcd2ce3d5469dc8708e0ee2',
+  coin_list_id: '0x257eb2ba592a5480bba0a97d05338fab17cc3283f8df6998a0e12e4ab9b84478',
+  coin_list_handle: '0x3204350fc603609c91675e07b8f9ac0999b9607d83845086321fca7f469de235',
 };
 
 // ============================================================

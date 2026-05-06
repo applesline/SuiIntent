@@ -175,7 +175,7 @@ export default function Login() {
   };
 
   const handleCopyCommand = () => {
-    navigator.clipboard.writeText('intorch daemon start');
+    navigator.clipboard.writeText('pnpm --filter @intentorch/web dev');
     setCommandCopied(true);
     setTimeout(() => setCommandCopied(false), 2000);
   };
@@ -441,7 +441,7 @@ export default function Login() {
                   </p>
                   <div className="relative group">
                     <pre className="bg-gray-900 dark:bg-gray-950 text-gray-100 p-3 rounded-lg text-xs font-mono overflow-x-auto">
-                      <code>intorch daemon start</code>
+                      <code>pnpm --filter @intentorch/web dev</code>
                     </pre>
                     <button
                       onClick={handleCopyCommand}

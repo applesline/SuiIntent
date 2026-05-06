@@ -22,6 +22,9 @@ import {
   XCircle,
   Loader2
 } from 'lucide-react';
+import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
+import { fromBase64 } from '@mysten/sui/utils';
 import { apiService } from '../services/api';
 import { formatRelativeTime } from '../utils/format';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -29,9 +32,25 @@ import type { Workflow, WorkflowStep } from '../types';
 import toast from 'react-hot-toast';
 import WorkflowVisualizer from '../components/workflows/WorkflowVisualizer';
 
+const DAEMON_BASE_URL = 'http://localhost:9658';
+
+/**
+ * 判断工作流是否为 Sui DeFi 相关工作流
+ * Sui 工作流的步骤 serverName 为 'sui' 或工具名包含 cetus_/navi_/sui_
+ */
+function isSuiWorkflow(workflow: Workflow): boolean {
+  return (workflow.steps || []).some(step =>
+    step.serverName === 'sui' ||
+    (step.toolName && /^(cetus|navi|sui)_/.test(step.toolName))
+  );
+}
+
 const Workflows: React.FC = () => {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
+  const currentAccount = useCurrentAccount();
+  const suiClient = useSuiClient();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -54,6 +73,7 @@ const Workflows: React.FC = () => {
     timestamp: string;
   } | null>(null);
   const [showResultsModal, setShowResultsModal] = useState(false);
+  const [isSuiExecuting, setIsSuiExecuting] = useState(false);
 
   // Get workflow list
   const { data: workflows = [], isLoading, refetch } = useQuery({
@@ -194,16 +214,163 @@ const Workflows: React.FC = () => {
     }
   };
 
+  /**
+   * 通过 daemon API 构建 Sui PTB 交易并让钱包签名执行
+   */
+  const executeSuiWorkflow = async (workflow: Workflow): Promise<{
+    success: boolean;
+    results: Array<{ toolName: string; status: 'success' | 'error'; output?: any; error?: string }>;
+    totalSteps: number;
+  }> => {
+    if (!currentAccount) {
+      throw new Error('请先连接 Sui 钱包');
+    }
+
+    setIsSuiExecuting(true);
+
+    try {
+      // 将工作流步骤转换为 plan 格式
+      const plan = {
+        id: `plan_${Date.now()}`,
+        summary: workflow.name || 'Workflow execution',
+        steps: (workflow.steps || []).map((step, index) => ({
+          id: step.id || `step_${index}`,
+          toolName: step.toolName,
+          description: step.description || '',
+          arguments: step.parameters || {},
+          dependsOn: step.dependsOn || [],
+        })),
+      };
+
+      // 确定网络（从步骤参数中推断，默认 mainnet）
+      const network = workflow.steps?.some(s => 
+        s.parameters?._metadata?.network === 'testnet'
+      ) ? 'testnet' as const : 'mainnet' as const;
+
+      // 步骤 1: 调用 daemon API 构建 PTB 交易
+      const buildResponse = await fetch(`${DAEMON_BASE_URL}/api/sui/build-transaction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan: {
+            id: plan.id,
+            summary: plan.summary,
+            steps: plan.steps,
+          },
+          signerAddress: currentAccount.address,
+          network,
+        }),
+      });
+
+      if (!buildResponse.ok) {
+        const errorData = await buildResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || `构建交易失败 (${buildResponse.status})`);
+      }
+
+      const buildData = await buildResponse.json();
+      if (!buildData.success || !buildData.txBytes) {
+        throw new Error(buildData.error || '构建交易失败');
+      }
+
+      // 步骤 2: 解码 txBytes 并创建 Transaction 对象
+      const txBytes = fromBase64(buildData.txBytes);
+      const tx = Transaction.fromKind(txBytes);
+      tx.setSender(currentAccount.address);
+
+      // 步骤 3: 通过钱包签名并执行
+      const txResult = await signAndExecuteTransaction({
+        transaction: tx,
+        chain: network === 'mainnet' ? 'sui:mainnet' : 'sui:testnet',
+      });
+
+      const digest = txResult.digest;
+
+      // 步骤 4: 返回结果
+      const results = plan.steps.map((step) => ({
+        toolName: step.toolName,
+        status: 'success' as const,
+        output: { txDigest: digest },
+      }));
+
+      return {
+        success: true,
+        results,
+        totalSteps: results.length,
+      };
+    } catch (error: any) {
+      const results = (workflow.steps || []).map((step) => ({
+        toolName: step.toolName,
+        status: 'error' as const,
+        error: error.message,
+      }));
+
+      return {
+        success: false,
+        results,
+        totalSteps: results.length,
+      };
+    } finally {
+      setIsSuiExecuting(false);
+    }
+  };
+
   // Handle execute workflow
-  const handleExecuteWorkflow = (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to execute workflow "${name}"?`)) {
+  const handleExecuteWorkflow = async (id: string, name: string) => {
+    // 查找工作流
+    const workflow = workflows.find(w => w.id === id);
+    if (!workflow) {
+      toast.error('Workflow not found');
+      return;
+    }
+
+    // 判断是否为 Sui 相关工作流
+    if (isSuiWorkflow(workflow)) {
+      // Sui 工作流：使用钱包签名流程
+      if (!currentAccount) {
+        toast.error(t('workflows.connectWallet'), { duration: 5000 });
+        return;
+      }
+
+      try {
+        const suiResult = await executeSuiWorkflow(workflow);
+        
+        // 更新工作流的 lastExecutedAt
+        try {
+          await apiService.saveWorkflow({
+            ...workflow,
+            lastExecutedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+          queryClient.invalidateQueries({ queryKey: ['workflows'] });
+        } catch (updateError) {
+          console.warn('[Workflows] Failed to update workflow lastExecutedAt:', updateError);
+        }
+
+        // 存储执行结果
+        setExecutionResults({
+          workflowId: id,
+          results: suiResult.results,
+          totalSteps: suiResult.totalSteps,
+          success: suiResult.success,
+          timestamp: new Date().toISOString(),
+        });
+
+        if (suiResult.success) {
+          toast.success('Workflow executed successfully via Sui wallet', { duration: 3000 });
+        } else {
+          toast.error(`Workflow execution failed: ${suiResult.results[0]?.error || 'Unknown error'}`, { duration: 5000 });
+        }
+
+        // 自动显示结果弹窗
+        setTimeout(() => setShowResultsModal(true), 500);
+      } catch (error: any) {
+        toast.error(`Failed to execute Sui workflow: ${error.message}`, { duration: 5000 });
+      }
+    } else {
+      // 非 Sui 工作流：使用原有的 MCP 工具调用流程
       executeWorkflowMutation.mutate(id, {
         onSuccess: () => {
-          // Results are already stored in executionResults state
-          // Auto-show results modal after execution
-          setTimeout(() => {
-            setShowResultsModal(true);
-          }, 500);
+          setTimeout(() => setShowResultsModal(true), 500);
         }
       });
     }

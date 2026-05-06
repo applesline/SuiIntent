@@ -262,8 +262,21 @@ export class CetusAdapter implements IProtocolAdapter {
   async addCommands(tx: Transaction, params: Record<string, any>): Promise<void> {
     this.checkInitialized();
 
+    const action = params.action || 'swap';
+    logger.info(`[CetusAdapter] addCommands action=${action}, params: ${JSON.stringify(params)}`);
+
+    if (action !== 'swap') {
+      logger.info(`[CetusAdapter] Action "${action}" is not a transaction command, skipping.`);
+      return;
+    }
+
+    // 根据网络自动选择合约地址
+    const network = (this.config?.network || 'testnet') as SuiNetwork;
+    const cetusConfig = getCetusConfig(network);
+    logger.info(`[CetusAdapter] network=${network}, cetusConfig.pools_id=${cetusConfig?.pools_id}`);
+
     const {
-      poolId,
+      poolId = cetusConfig?.pools_id, // 如果未提供 poolId，使用默认的 pools_id (factory::Pools)
       coinTypeIn,
       coinTypeOut,
       amount,
@@ -272,12 +285,15 @@ export class CetusAdapter implements IProtocolAdapter {
     } = params;
 
     if (!poolId || !coinTypeIn || !coinTypeOut || !amount) {
-      throw new Error('Missing required parameters for Cetus swap');
+      const missing = [];
+      if (!poolId) missing.push('poolId');
+      if (!coinTypeIn) missing.push('coinTypeIn');
+      if (!coinTypeOut) missing.push('coinTypeOut');
+      if (!amount) missing.push('amount');
+      const errorMsg = `Missing required parameters for Cetus swap: ${missing.join(', ')}. Received: ${JSON.stringify(params)}`;
+      logger.error(`[CetusAdapter] ${errorMsg}`);
+      throw new Error(errorMsg);
     }
-
-    // 根据网络自动选择合约地址
-    const network = (this.config?.network || 'testnet') as SuiNetwork;
-    const cetusConfig = getCetusConfig(network);
 
     // 解析具体的池子 ID（如果 poolId 是 factory::Pools 对象）
     const resolvedPoolId = await this.resolvePoolId(poolId, coinTypeIn, coinTypeOut);

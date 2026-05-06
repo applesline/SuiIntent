@@ -127,6 +127,8 @@ export interface CloudIntentEngineConfig {
     logWarnings?: boolean;
     enforceRequired?: boolean;
   };
+  /** Language for LLM system prompt: 'zh' for Chinese, 'en' for English (default) */
+  language?: 'zh' | 'en';
 }
 
 // ==================== Execution Context ====================
@@ -205,7 +207,13 @@ export class CloudIntentEngine {
       systemPrompt?: string;
       model?: string;
       temperature?: number;
-      toolChoice?: "auto" | "none";
+      toolChoice?: "auto" | "none" | "required";
+      /** Use JSON mode instead of function calling. Useful for providers that don't support tool_choice: "required". */
+      useJsonMode?: boolean;
+      /** Language for system prompt: 'zh' for Chinese, 'en' for English. Defaults to config.language. */
+      language?: 'zh' | 'en';
+      /** Network to use for operations. When provided, injects network info into system prompt. */
+      network?: 'mainnet' | 'testnet';
     },
   ): Promise<ToolExecutionPlan> {
     logger.info(
@@ -214,8 +222,19 @@ export class CloudIntentEngine {
 
     const startTime = Date.now();
 
-    // Build the system prompt with available tools
-    const systemPrompt = options?.systemPrompt || this.buildSystemPrompt();
+    // Determine effective language and network
+    const effectiveLanguage = options?.language || this.config.language || 'en';
+    const effectiveNetwork = options?.network || 'mainnet';
+    const useJsonMode = options?.useJsonMode ?? false;
+
+    // Build the system prompt with available tools, language, and network
+    // If an external systemPrompt is provided, use it as-is (for backward compatibility)
+    // Otherwise, build it automatically with language, network, and tool descriptions
+    const systemPrompt = options?.systemPrompt || this.buildSystemPrompt({
+      useJsonMode,
+      language: effectiveLanguage,
+      network: effectiveNetwork,
+    });
 
     // Build the user message with the query
     const userMessage = this.buildUserMessage(query);
@@ -224,23 +243,39 @@ export class CloudIntentEngine {
       // Determine tool choice mode
       const toolChoice = options?.toolChoice || "auto";
 
-      // Call LLM with function calling
-      const response = await this.llmClient.chat({
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        temperature: options?.temperature,
-        tools: toolChoice === "none" ? undefined : this.availableTools.map((tool) => ({
-          type: "function" as const,
-          function: {
-            name: tool.name,
-            description: tool.description || "",
-            parameters: tool.inputSchema || { type: "object", properties: {} },
-          },
-        })),
-        toolChoice,
-      });
+      let response: LLMClientResponse;
+
+      if (useJsonMode) {
+        // JSON mode: Use response_format to force LLM to return JSON
+        // This is useful for providers (like DeepSeek) that may not support tool_choice: "required"
+        // The system prompt already instructs the LLM to return a JSON plan with steps
+        response = await this.llmClient.chat({
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+          ],
+          temperature: options?.temperature,
+          responseFormat: { type: "json_object" },
+        });
+      } else {
+        // Function calling mode: Use tools parameter for structured tool calls
+        response = await this.llmClient.chat({
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+          ],
+          temperature: options?.temperature,
+          tools: toolChoice === "none" ? undefined : this.availableTools.map((tool) => ({
+            type: "function" as const,
+            function: {
+              name: tool.name,
+              description: tool.description || "",
+              parameters: tool.inputSchema || { type: "object", properties: {} },
+            },
+          })),
+          toolChoice,
+        });
+      }
 
       // Parse the response into a plan
       const plan = this.parseResponseToPlan(query, response);
@@ -573,43 +608,327 @@ export class CloudIntentEngine {
   // ==================== Private Methods ====================
 
   /**
-   * Build the system prompt with available tools
+   * 工具描述的中文翻译映射
+   * 当 language='zh' 时，将工具的英文描述替换为中文描述
    */
-  private buildSystemPrompt(): string {
+  private static readonly TOOL_DESCRIPTIONS_ZH: Record<string, { description: string; params: Record<string, string> }> = {
+    'cetus_swap': {
+      description: '【执行类工具 (EXECUTION)】在 Cetus DEX 上执行真实的代币兑换交易（Swap）。这是执行买卖操作的唯一正确工具。支持任意两种代币之间的兑换，自动路由最优池子。',
+      params: {
+        coinTypeIn: '输入代币的类型，如 "SUI" 或 "0x2::sui::SUI"',
+        coinTypeOut: '输出代币的类型，如 "USDC"',
+        amount: '金额（最小单位），如 "1000000000" = 1 SUI',
+        byAmountIn: 'true=固定输入金额, false=固定输出金额',
+        slippage: '滑点容忍度，如 0.005 = 0.5%',
+        poolId: '可选，指定交易池 ID',
+      },
+    },
+    'cetus_view_quote': {
+      description: '【仅查询 (READ-ONLY)】仅查看 Cetus DEX 上的兑换报价，不执行交易。严禁将此工具加入到需要执行交易的执行计划中。',
+      params: {
+        coinTypeIn: '输入代币的完整类型',
+        coinTypeOut: '输出代币的完整类型',
+        amount: '输入金额（最小单位）',
+        byAmountIn: 'true=固定输入, false=固定输出',
+      },
+    },
+    'cetus_view_pools': {
+      description: '【仅查询 (READ-ONLY)】仅查看 Cetus DEX 上可用的交易池列表，不执行交易。严禁将此工具加入到执行计划中。',
+      params: {
+        coinTypeA: '可选，代币 A 的类型',
+        coinTypeB: '可选，代币 B 的类型',
+      },
+    },
+    'navi_deposit': {
+      description: '【执行类工具 (EXECUTION)】在 Navi Protocol 上执行存入资产的真实交易。存入指定代币到 Navi 借贷池，赚取存款利息。',
+      params: {
+        coinType: '要存入的代币类型，如 "0x2::sui::SUI"',
+        amount: '存入金额（最小单位）',
+      },
+    },
+    'navi_withdraw': {
+      description: '【执行类工具 (EXECUTION)】从 Navi Protocol 执行提取资产的真实交易。提取之前存入的资产。',
+      params: {
+        coinType: '要提取的代币类型',
+        amount: '提取金额（最小单位）',
+      },
+    },
+    'navi_borrow': {
+      description: '【执行类工具 (EXECUTION)】从 Navi Protocol 执行借出资产的真实交易。使用已存入的资产作为抵押，借出指定代币。',
+      params: {
+        coinType: '要借出的代币类型',
+        amount: '借出金额（最小单位）',
+      },
+    },
+    'navi_repay': {
+      description: '【执行类工具 (EXECUTION)】偿还 Navi Protocol 借款的真实交易。归还之前借出的资产。',
+      params: {
+        coinType: '要偿还的代币类型',
+        amount: '偿还金额（最小单位）',
+      },
+    },
+    'sui_transfer': {
+      description: '【执行类工具 (EXECUTION)】在 Sui 区块链上执行转账交易。将指定代币发送到目标地址。',
+      params: {
+        recipient: '接收地址，以 0x 开头',
+        amount: '转账金额（最小单位），"all" 表示全部余额',
+        coinType: '代币类型，默认 "0x2::sui::SUI"',
+      },
+    },
+    'sui_view_balance': {
+      description: '【仅查询 (READ-ONLY)】仅查询 Sui 地址的代币余额，不执行交易。',
+      params: {
+        address: '要查询的地址',
+        coinType: '可选，代币类型，默认 SUI',
+      },
+    },
+  };
+
+  /**
+   * Build the system prompt with available tools
+   * Supports both Chinese (zh) and English (en) based on config.language
+   * When language is 'zh', tool descriptions and parameter descriptions are translated to Chinese.
+   *
+   * The prompt adapts based on whether JSON mode or function calling mode is used:
+   * - JSON mode: LLM returns a JSON object with a "steps" array
+   * - Function calling mode: LLM uses tool calls for each step
+   *
+   * @param options - Optional parameters to override config settings
+   * @param options.useJsonMode - Whether to use JSON mode (default: false)
+   * @param options.language - Language override ('zh' | 'en'), defaults to config.language
+   * @param options.network - Network to inject into prompt ('mainnet' | 'testnet'), defaults to 'mainnet'
+   */
+  private buildSystemPrompt(options?: {
+    useJsonMode?: boolean;
+    language?: 'zh' | 'en';
+    network?: 'mainnet' | 'testnet';
+  }): string {
+    const useJsonMode = options?.useJsonMode ?? false;
+    const isZh = (options?.language || this.config.language) === 'zh';
+    const network = options?.network || 'mainnet';
     const toolsDescription = this.availableTools
       .map((tool) => {
+        const zhInfo = CloudIntentEngine.TOOL_DESCRIPTIONS_ZH[tool.name];
+        const description = isZh && zhInfo ? zhInfo.description : (tool.description || "No description");
+
         const params = tool.inputSchema?.properties
           ? Object.entries(tool.inputSchema.properties)
               .map(([key, value]) => {
                 const prop = value as Record<string, unknown>;
-                return `  - ${key} (${(prop.type as string) || "string"}): ${(prop.description as string) || ""}`;
+                const paramDesc = isZh && zhInfo?.params[key]
+                  ? zhInfo.params[key]
+                  : ((prop.description as string) || "");
+                return `  - ${key} (${(prop.type as string) || "string"}): ${paramDesc}`;
               })
               .join("\n")
           : "  No parameters";
 
         return `Tool: ${tool.name}
-Description: ${tool.description || "No description"}
+Description: ${description}
 Parameters:
 ${params}`;
       })
       .join("\n\n");
 
-    return `You are an intelligent assistant that generates structured execution plans.
+    // Network hint to inject into the prompt
+    const networkHint = isZh
+      ? `当前钱包连接的网络是：${network}。请使用此网络执行所有操作。注意：不要将 network 作为工具的参数返回，network 由系统自动处理。`
+      : `Current wallet network: ${network}. Use this network for all operations. IMPORTANT: Do NOT include 'network' as a tool parameter - it is handled automatically by the system.`;
+
+    if (isZh) {
+      if (useJsonMode) {
+        return `你是一个 Sui 区块链 DeFi 助手，负责将用户的自然语言意图解析为结构化的执行计划。
+
+你有以下 MCP 工具可用：
+
+${toolsDescription}
+
+${networkHint}
+
+关键规则 - 你必须严格遵守：
+
+1. **必须返回 JSON 格式的计划。** 你的响应必须是一个 JSON 对象，包含 "steps" 数组。不要使用 function calling，直接返回 JSON。
+
+2. **在你的计划中只能使用【执行类工具 (EXECUTION)】。** 绝不能使用【仅查询 (READ-ONLY)】工具。READ-ONLY 工具仅用于信息查询。
+
+3. **对于兑换/交换操作**（如"卖出 SUI 买入 USDC"、"用 X 换 Y"、"用 USDC 买 SUI"），必须使用 \`cetus_swap\` 工具。绝不能使用 \`cetus_view_pools\` 或 \`cetus_view_quote\` 来执行交易。
+
+4. **对于多步骤操作**（如"先兑换再存入"、"swap then deposit"），必须识别出所有步骤并生成完整的执行计划。例如用户说"卖出 SUI 买入 USDC，然后存入 Navi"，应该生成两个步骤：cetus_swap + navi_deposit。绝不能遗漏任何步骤。
+
+5. **从用户查询中提取精确金额**并转换为最小单位（例如 0.01 SUI = 10000000 MIST）。
+
+6. **如果后续步骤的金额依赖于前一步的输出（如 swap 后的输出金额），使用 "auto" 作为金额。** 系统会自动计算并填充正确的金额。
+
+7. **每个步骤必须是一个独立的 JSON 对象。** 不要将多个操作合并到一个步骤中。
+
+JSON 格式要求：
+\`\`\`json
+{
+  "summary": "计划的简要描述",
+  "steps": [
+    {
+      "toolName": "cetus_swap",
+      "description": "步骤描述",
+      "arguments": {
+        "coinTypeIn": "0x2::sui::SUI",
+        "coinTypeOut": "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN",
+        "amount": "10000000",
+        "byAmountIn": true,
+        "slippage": 0.005
+      },
+      "dependsOn": []
+    },
+    {
+      "toolName": "navi_deposit",
+      "description": "步骤描述",
+      "arguments": {
+        "coinType": "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN",
+        "amount": "auto"
+      },
+      "dependsOn": ["step_1"]
+    }
+  ]
+}
+\`\`\`
+
+你的任务是分析用户的请求并生成一个 JSON 计划：
+1. 选择合适的执行工具来满足请求
+2. 从用户查询中提取参数
+3. 正确排序步骤（依赖在前）
+4. 为每个步骤提供清晰的描述
+
+重要：对于"卖出 SUI 买入 USDC，然后存入 Navi"，你必须生成两个步骤：cetus_swap + navi_deposit。绝不能遗漏任何步骤。`;
+      }
+
+      return `你是一个 Sui 区块链 DeFi 助手，负责将用户的自然语言意图解析为结构化的执行计划。
+
+你有以下 MCP 工具可用：
+
+${toolsDescription}
+
+${networkHint}
+
+关键规则 - 你必须严格遵守：
+
+1. **必须使用 function calling（工具调用）来生成计划。** 不要返回基于文本的 JSON 计划。直接调用可用的工具。每个步骤必须对应一个独立的工具调用。
+
+2. **在你的计划中只能使用【执行类工具 (EXECUTION)】。** 绝不能使用【仅查询 (READ-ONLY)】工具。READ-ONLY 工具仅用于信息查询。
+
+3. **对于兑换/交换操作**（如"卖出 SUI 买入 USDC"、"用 X 换 Y"、"用 USDC 买 SUI"），必须使用 \`cetus_swap\` 工具。绝不能使用 \`cetus_view_pools\` 或 \`cetus_view_quote\` 来执行交易。
+
+4. **对于多步骤操作**（如"先兑换再存入"、"swap then deposit"），必须识别出所有步骤并生成完整的执行计划。例如用户说"卖出 SUI 买入 USDC，然后存入 Navi"，应该生成两个步骤：cetus_swap + navi_deposit。绝不能遗漏任何步骤。
+
+5. **从用户查询中提取精确金额**并转换为最小单位（例如 0.01 SUI = 10000000 MIST）。
+
+6. **如果后续步骤的金额依赖于前一步的输出（如 swap 后的输出金额），使用 "auto" 作为金额。** 系统会自动计算并填充正确的金额。
+
+7. **每个步骤必须使用独立的 function call（工具调用）。** 不要将多个操作合并到一个工具调用中。
+
+你的任务是分析用户的请求并生成一个计划：
+1. 选择合适的执行工具来满足请求
+2. 从用户查询中提取参数
+3. 正确排序步骤（依赖在前）
+4. 为每个步骤提供清晰的描述
+
+重要：你必须为每个步骤生成一个独立的 function call（工具调用）。例如，对于"卖出 SUI 买入 USDC，然后存入 Navi"，你必须生成两个独立的 function call：第一个是 cetus_swap，第二个是 navi_deposit。`;
+    }
+
+    // English prompts
+    if (useJsonMode) {
+      return `You are an intelligent assistant that generates structured execution plans for Sui DeFi operations.
 
 You have access to the following MCP tools:
 
 ${toolsDescription}
 
-Your task is to analyze the user's request and generate a plan that:
-1. Selects the appropriate tools to fulfill the request
+${networkHint}
+
+CRITICAL RULES - You MUST follow these rules strictly:
+
+1. **MUST return a JSON-formatted plan.** Your response must be a JSON object with a "steps" array. Do NOT use function calling, return JSON directly.
+
+2. **Only use EXECUTION tools in your plan.** NEVER use READ-ONLY tools in an execution plan. READ-ONLY tools are for information queries only.
+
+3. **For swap/exchange operations** (e.g., "sell SUI for USDC", "swap X for Y", "buy X with Y"), ALWAYS use the \`cetus_swap\` tool. NEVER use \`cetus_view_pools\` or \`cetus_view_quote\` for execution plans.
+
+4. **For multi-step operations** (e.g., "swap then deposit", "sell X for Y then deposit Z"), generate ALL required steps in the correct order. Each step should depend on the previous step. For example, "sell SUI for USDC then deposit into Navi" should generate TWO steps: cetus_swap + navi_deposit. Never miss any step.
+
+5. **Extract exact amounts from the user's query** and convert to the smallest unit (e.g., 0.01 SUI = 10000000 MIST).
+
+6. **If a subsequent step's amount depends on a previous step's output (e.g., the output of a swap), use "auto" as the amount.** The system will automatically calculate and fill in the correct amount.
+
+7. **Each step MUST be a separate JSON object.** Do NOT combine multiple operations into a single step.
+
+JSON format:
+\`\`\`json
+{
+  "summary": "Brief description of the plan",
+  "steps": [
+    {
+      "toolName": "cetus_swap",
+      "description": "Description of the step",
+      "arguments": {
+        "coinTypeIn": "0x2::sui::SUI",
+        "coinTypeOut": "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN",
+        "amount": "10000000",
+        "byAmountIn": true,
+        "slippage": 0.005
+      },
+      "dependsOn": []
+    },
+    {
+      "toolName": "navi_deposit",
+      "description": "Description of the step",
+      "arguments": {
+        "coinType": "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN",
+        "amount": "auto"
+      },
+      "dependsOn": ["step_1"]
+    }
+  ]
+}
+\`\`\`
+
+Your task is to analyze the user's request and generate a JSON plan that:
+1. Selects the appropriate EXECUTION tools to fulfill the request
 2. Extracts parameters from the user's query
 3. Orders steps correctly (dependencies first)
 4. Provides clear descriptions for each step
 
-IMPORTANT: Return your response as a structured plan with steps. Each step must specify:
-- The tool to use
-- The parameters to pass
-- Any dependencies on previous steps`;
+IMPORTANT: For "sell SUI for USDC then deposit into Navi", you MUST generate TWO steps: cetus_swap + navi_deposit. Never miss any step.`;
+    }
+
+    return `You are an intelligent assistant that generates structured execution plans for Sui DeFi operations.
+
+You have access to the following MCP tools:
+
+${toolsDescription}
+
+${networkHint}
+
+CRITICAL RULES - You MUST follow these rules strictly:
+
+1. **MUST use function calling (tool calls) to generate the plan.** Do NOT return a text-based JSON plan. Use the available tools by calling them directly. Each step MUST be a separate tool call.
+
+2. **Only use EXECUTION tools (marked with 【执行类工具 (EXECUTION)】) in your plan.** NEVER use READ-ONLY tools (marked with 【仅查询 (READ-ONLY)】) in an execution plan. READ-ONLY tools are for information queries only.
+
+3. **For swap/exchange operations** (e.g., "sell SUI for USDC", "swap X for Y", "buy X with Y"), ALWAYS use the \`cetus_swap\` tool. NEVER use \`cetus_view_pools\` or \`cetus_view_quote\` for execution plans.
+
+4. **For multi-step operations** (e.g., "swap then deposit", "sell X for Y then deposit Z"), generate ALL required steps in the correct order. Each step should depend on the previous step. For example, "sell SUI for USDC then deposit into Navi" should generate TWO steps: cetus_swap + navi_deposit. Never miss any step.
+
+5. **Extract exact amounts from the user's query** and convert to the smallest unit (e.g., 0.01 SUI = 10000000 MIST).
+
+6. **If a subsequent step's amount depends on a previous step's output (e.g., the output of a swap), use "auto" as the amount.** The system will automatically calculate and fill in the correct amount.
+
+7. **Each step MUST be a separate function call (tool call).** Do NOT combine multiple operations into a single tool call.
+
+Your task is to analyze the user's request and generate a plan that:
+1. Selects the appropriate EXECUTION tools to fulfill the request
+2. Extracts parameters from the user's query
+3. Orders steps correctly (dependencies first)
+4. Provides clear descriptions for each step
+
+IMPORTANT: You MUST generate one separate function call (tool call) for each step. For example, for "sell SUI for USDC then deposit into Navi", you MUST generate TWO separate function calls: first cetus_swap, then navi_deposit.`;
   }
 
   /**
@@ -659,8 +978,8 @@ Please generate a structured execution plan to fulfill this request.`;
         try {
           const parsed = JSON.parse(candidate);
           if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            // Check if it looks like a plan (has steps or summary)
-            if (parsed.steps || parsed.summary) {
+            // Check if it looks like a plan (has steps, plan, or summary)
+            if (parsed.steps || parsed.plan || parsed.summary) {
               logger.debug('[CloudIntentEngine] Successfully parsed JSON from embedded text');
               return parsed as Record<string, unknown>;
             }
@@ -774,9 +1093,29 @@ Please generate a structured execution plan to fulfill this request.`;
           (parsed.summary as string) ||
           `Plan with ${plan.steps.length} steps`;
       } else if (parsed && !parsed.steps) {
-        // Parsed JSON but no steps field - use as summary
-        plan.summary = response.text.substring(0, 200);
-        logger.warn(`[CloudIntentEngine] Parsed JSON has no 'steps' field: ${JSON.stringify(parsed).substring(0, 200)}`);
+        // Check if the JSON has a 'plan' field (alternative format)
+        if (parsed.plan && Array.isArray(parsed.plan)) {
+          plan.steps = parsed.plan.map(
+            (step: Record<string, unknown>, index: number) => ({
+              id: (step.id as string) || `step_${index + 1}`,
+              toolName: (step.toolName as string) || (step.tool as string) || "",
+              serverName:
+                (step.serverName as string) ||
+                toolServerMap.get((step.toolName as string) || (step.tool as string)),
+              description: (step.description as string) || `Step ${index + 1}`,
+              arguments: (step.arguments as Record<string, unknown>) || (step.params as Record<string, unknown>) || {},
+              dependsOn: (step.dependsOn as string[]) || [],
+            }),
+          );
+          plan.summary =
+            (parsed.summary as string) ||
+            `Plan with ${plan.steps.length} steps`;
+          logger.info(`[CloudIntentEngine] Parsed ${plan.steps.length} steps from 'plan' field`);
+        } else {
+          // Parsed JSON but no steps or plan field - use as summary
+          plan.summary = response.text.substring(0, 200);
+          logger.warn(`[CloudIntentEngine] Parsed JSON has no 'steps' or 'plan' field: ${JSON.stringify(parsed).substring(0, 200)}`);
+        }
       } else {
         // Could not parse JSON at all
         plan.summary = response.text.substring(0, 200);

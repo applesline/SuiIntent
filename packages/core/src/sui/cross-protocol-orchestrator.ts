@@ -27,6 +27,8 @@ import type { IProtocolAdapter, AdapterConfig } from './adapters/types.js';
 import { CetusAdapter } from './adapters/cetus-adapter.js';
 import { NaviAdapter } from './adapters/navi-adapter.js';
 import { SuiAdapter } from './adapters/sui-adapter.js';
+import { getCetusConfig } from './network-config.js';
+import { CoinTypeResolver } from './coin-type-resolver.js';
 
 /** 编排器配置 */
 export interface OrchestratorConfig {
@@ -314,8 +316,41 @@ export class CrossProtocolOrchestrator {
     // 注入步骤的 action 到参数中（适配器需要）
     params.action = step.action;
 
-    // 从步骤参数中提取 network，如果存在则覆盖编排器的默认 network
-    // 这样 LLM 可以在步骤参数中指定 network（如 "mainnet" 或 "testnet"）
+    // 1. 参数名称标准化与类型转换
+    // 对于 Cetus swap
+    if (step.protocol === 'cetus' && step.action === 'swap') {
+      // 标准化代币类型
+      if (params.coinTypeIn) params.coinTypeIn = this.normalizeCoinType(params.coinTypeIn);
+      if (params.coinTypeOut) params.coinTypeOut = this.normalizeCoinType(params.coinTypeOut);
+      
+      // 标准化金额 (如果不是 MIST 格式则尝试转换)
+      if (params.amount && typeof params.amount === 'string' && (params.amount.includes('.') || !/^\d+$/.test(params.amount))) {
+        const symbol = step.params.coinTypeIn || 'SUI';
+        const extracted = this.extractAmountFromValue(params.amount, symbol);
+        if (extracted) params.amount = extracted;
+      }
+
+      // 强制 byAmountIn=true：用户意图通常是"卖出 X 代币"（固定输入金额）
+      // LLM 有时会错误地返回 byAmountIn=false（固定输出金额），
+      // 这会导致 Cetus 合约尝试反向计算输入金额，容易触发 EInsufficientToken (abort code: 4)
+      if (params.byAmountIn === false) {
+        logger.warn(`[Orchestrator] Forcing byAmountIn=true for Cetus swap (was false). This prevents EInsufficientToken errors.`);
+        params.byAmountIn = true;
+      }
+    }
+
+    // 对于 Navi 操作
+    if (step.protocol === 'navi') {
+      if (params.coinType) params.coinType = this.normalizeCoinType(params.coinType);
+      
+      if (params.amount && typeof params.amount === 'string' && (params.amount.includes('.') || !/^\d+$/.test(params.amount))) {
+        const symbol = step.params.coinType || 'SUI';
+        const extracted = this.extractAmountFromValue(params.amount, symbol);
+        if (extracted) params.amount = extracted;
+      }
+    }
+
+    // 2. 网络覆盖
     if (params.network) {
       const network = params.network as string;
       if (network === 'mainnet' || network === 'testnet') {
@@ -337,17 +372,23 @@ export class CrossProtocolOrchestrator {
       delete params.network;
     }
 
-    // 为 Cetus swap 添加默认 poolId
-    // 使用合约配置中的 pools_id 作为默认值（至少是一个有效的对象 ID）
+    // 3. 为 Cetus swap 添加默认 poolId
     if (step.protocol === 'cetus' && step.action === 'swap') {
       if (!params.poolId) {
-        // 从 contractAddresses 中获取 pools_id
         const contractAddresses = this.config.contractAddresses;
-        params.poolId = contractAddresses.cetus_pools_id || contractAddresses.pools_id || '0x26c85500f5dd2983bf35123918a144de24e18936d0b234ef2b49fbb2d3d6307d';
+        // 优先使用 contractAddresses 中传入的 pools_id
+        // 如果没有传入，则根据当前网络动态获取
+        if (contractAddresses.cetus_pools_id || contractAddresses.pools_id) {
+          params.poolId = contractAddresses.cetus_pools_id || contractAddresses.pools_id;
+        } else {
+          // 动态获取当前网络的 Cetus pools_id
+          const cetusConfig = getCetusConfig(this.config.network);
+          params.poolId = cetusConfig.pools_id;
+        }
       }
     }
 
-    // 处理步骤间数据依赖
+    // 4. 处理步骤间数据依赖
     if (step.dependsOn !== undefined && step.dependsOn.length > 0) {
       for (const depId of step.dependsOn) {
         const depStep = plan.steps.find(s => s.id === depId);
@@ -355,18 +396,13 @@ export class CrossProtocolOrchestrator {
           // 将依赖步骤的输出注入到当前步骤的参数中
           const outputAssets = depStep.assetFlow.outputAssets;
           if (outputAssets.length > 0) {
-            const outputCoinType = outputAssets[0].coinType;
+            const outputCoinType = this.normalizeCoinType(outputAssets[0].coinType);
             const outputAmount = outputAssets[0].amount;
 
             // 根据步骤协议和操作类型，确定正确的参数名
             if (step.protocol === 'navi') {
-              // Navi 使用 coinType 参数名
               params.coinType = outputCoinType;
             } else if (step.protocol === 'cetus') {
-              // Cetus 使用 coinTypeIn 参数名
-              params.coinTypeIn = outputCoinType;
-            } else {
-              // 通用回退
               params.coinTypeIn = outputCoinType;
             }
 
@@ -379,9 +415,25 @@ export class CrossProtocolOrchestrator {
       }
     }
 
-
-
     return params;
+  }
+
+  /**
+   * 从字符串值中提取金额并转换为最小单位
+   */
+  private extractAmountFromValue(value: string, symbolHint?: string): string | null {
+    // 如果已经是纯数字字符串，直接返回
+    if (/^\d+$/.test(value)) return value;
+
+    const amountPattern = /(\d+(?:\.\d+)?)\s*(\w+)?/i;
+    const match = value.match(amountPattern);
+    if (match) {
+      const amount = parseFloat(match[1]);
+      const symbol = match[2] || symbolHint || 'SUI';
+      const decimals = this.getCoinDecimals(symbol);
+      return BigInt(Math.floor(amount * Math.pow(10, decimals))).toString();
+    }
+    return null;
   }
 
   /**
@@ -708,42 +760,30 @@ export class CrossProtocolOrchestrator {
   /**
    * 标准化 Coin 类型
    * 根据当前网络使用对应的链上地址
+   *
+   * 使用 CoinTypeResolver 的同步方法解析代币简写。
+   * CoinTypeResolver 在构造时立即使用内置默认映射，
+   * 同时在后台异步从链上获取最新数据并更新缓存。
    */
   private normalizeCoinType(symbol: string): string {
-    const upperSymbol = symbol.toUpperCase();
-    const network = this.config.network;
+    if (!symbol) return '';
+    
+    // 如果已经是完整的代币类型（包含 ::），且不包含占位符 "..."
+    if (symbol.includes('::') && !symbol.includes('...')) {
+      return symbol;
+    }
 
-    // 主网地址映射
-    const mainnetCoinTypeMap: Record<string, string> = {
-      'SUI': '0x2::sui::SUI',
-      'USDC': '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
-      'WUSDC': '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
-      'NUSDC': '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
-      'USDT': '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN',
-      'CETUS': '0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b::cetus::CETUS',
-      'WETH': '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN',
-      'WBTC': '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN',
-      'NAVX': '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
-      'AUSD': '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14df2ff2::ausd::AUSD',
-      'DEEP': '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP',
-    };
-
-    // 测试网地址映射（从 Cetus testnet coin_list 和 Navi API 获取）
-    const testnetCoinTypeMap: Record<string, string> = {
-      'SUI': '0x2::sui::SUI',
-      'USDC': '0x14a71d857b34677a7d57e0feb303df1adb515a37780645ab763d42ce8d1a5e48::usdc::USDC',
-      'WUSDC': '0x14a71d857b34677a7d57e0feb303df1adb515a37780645ab763d42ce8d1a5e48::usdc::USDC',
-      'USDT': '0x14a71d857b34677a7d57e0feb303df1adb515a37780645ab763d42ce8d1a5e48::usdt::USDT',
-      'CETUS': '0x14a71d857b34677a7d57e0feb303df1adb515a37780645ab763d42ce8d1a5e48::cetus::CETUS',
-      'ETH': '0xbd22966ee345483662ec067201c5b648fefe97121382836bbcb836d25124ec6c::eth::ETH',
-      'WAL': '0xbd22966ee345483662ec067201c5b648fefe97121382836bbcb836d25124ec6c::wal::WAL',
-      'DEEP': '0xbd22966ee345483662ec067201c5b648fefe97121382836bbcb836d25124ec6c::deep::DEEP',
-      'HAWAL': '0xbd22966ee345483662ec067201c5b648fefe97121382836bbcb836d25124ec6c::hawal::HAWAL',
-      'NBTC': '0x5419f6e223f18a9141e91a42286f2783eee27bf2667422c2100afc7b2296731b::nbtc::NBTC',
-    };
-
-    const coinTypeMap = network === 'testnet' ? testnetCoinTypeMap : mainnetCoinTypeMap;
-    return coinTypeMap[upperSymbol] || `0x2::${symbol.toLowerCase()}::${upperSymbol}`;
+    // 使用 CoinTypeResolver 同步解析
+    const resolver = CoinTypeResolver.getInstance(this.config.network);
+    const resolved = resolver.resolveSync(symbol);
+    
+    if (resolved) return resolved;
+    
+    // 如果无法解析且包含 ::，保持原样（可能是自定义代币）
+    if (symbol.includes('::')) return symbol;
+    
+    // 回退到 SUI 命名空间下的默认格式
+    return `0x2::${symbol.toLowerCase()}::${symbol.toUpperCase()}`;
   }
   /**
    * 从意图中提取金额

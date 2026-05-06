@@ -147,7 +147,7 @@ const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = ({
                     )}
                   </div>
                   <p className="font-medium text-gray-900 dark:text-white truncate">
-                    {result.toolName || result.name || 'Unknown Step'}
+                    {result.toolName || result.name || t('orchestration.unknownStep')}
                   </p>
                 </div>
               </div>
@@ -173,7 +173,7 @@ const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = ({
                   <div className="flex items-start space-x-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-100 dark:border-red-900/50">
                     <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
                     <div>
-                      <p className="text-xs font-medium text-red-700 dark:text-red-400">Error</p>
+                      <p className="text-xs font-medium text-red-700 dark:text-red-400">{t('orchestration.errorLabel')}</p>
                       <p className="text-sm text-red-600 dark:text-red-300">{result.error}</p>
                     </div>
                   </div>
@@ -182,12 +182,12 @@ const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = ({
                 {result.output && (
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-gray-500">Output</span>
+                      <span className="text-xs font-medium text-gray-500">{t('orchestration.outputLabel')}</span>
                       <button
                         onClick={() => setShowRawOutput(!showRawOutput)}
                         className="text-xs text-primary-500 hover:text-primary-600"
                       >
-                        {showRawOutput ? 'Formatted' : 'Raw'}
+                        {showRawOutput ? t('orchestration.formatted') : t('orchestration.raw')}
                       </button>
                     </div>
                     <pre className="text-xs bg-gray-50 dark:bg-gray-900/50 p-3 rounded-lg overflow-x-auto border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 max-h-48 overflow-y-auto">
@@ -198,7 +198,7 @@ const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = ({
 
                 {result.result && (
                   <div>
-                    <span className="text-xs font-medium text-gray-500 mb-1 block">Result</span>
+                    <span className="text-xs font-medium text-gray-500 mb-1 block">{t('orchestration.resultLabel')}</span>
                     <pre className="text-xs bg-gray-50 dark:bg-gray-900/50 p-3 rounded-lg overflow-x-auto border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 max-h-48 overflow-y-auto">
                       {JSON.stringify(result.result, null, 2)}
                     </pre>

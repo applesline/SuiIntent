@@ -59,7 +59,7 @@ export async function handleSuiIntentRoutes(ctx: RouteContext): Promise<boolean>
  */
 async function handleParseSuiIntent(res: http.ServerResponse, body: string): Promise<boolean> {
   try {
-    const { intent, apiKey, provider, model } = JSON.parse(body || '{}');
+    const { intent, apiKey, provider, model, language, network } = JSON.parse(body || '{}');
 
     if (!intent) {
       sendJson(res, 400, { success: false, error: 'Missing required field: intent' });
@@ -70,6 +70,9 @@ async function handleParseSuiIntent(res: http.ServerResponse, body: string): Pro
       sendJson(res, 400, { success: false, error: 'Missing required field: apiKey' });
       return true;
     }
+
+    // 确定网络（默认 mainnet）
+    const resolvedNetwork: 'mainnet' | 'testnet' = (network === 'mainnet' || network === 'testnet') ? network : 'mainnet';
 
     // 创建 CloudIntentEngine（用完即弃，不持久化 apiKey）
     const engine = new CloudIntentEngine({
@@ -92,6 +95,8 @@ async function handleParseSuiIntent(res: http.ServerResponse, body: string): Pro
         enableKeywordMatching: true,
         askUserOnFailure: false,
       },
+      // 根据前端语言设置 LLM system prompt 语言
+      language: language === 'zh' ? 'zh' : 'en',
     });
 
     // 注册 Sui MCP Tools
@@ -99,34 +104,25 @@ async function handleParseSuiIntent(res: http.ServerResponse, body: string): Pro
     engine.setAvailableTools(suiTools);
 
     console.log(`[SuiIntent] Parsing intent with ${suiTools.length} Sui MCP tools available`);
-    console.log(`[SuiIntent] Using provider=${provider || 'deepseek'}, model=${model || 'deepseek-chat'}`);
+    console.log(`[SuiIntent] Using provider=${provider || 'deepseek'}, model=${model || 'deepseek-chat'}, language=${language || 'en'}, network=${resolvedNetwork}`);
 
     // 使用 CloudIntentEngine 解析意图
+    // planQuery 会自动构建 system prompt（包含工具描述、语言、网络信息）
+    // 使用 useJsonMode=true + response_format: json_object 来强制 LLM 返回 JSON 格式的计划
+    // 这是因为 DeepSeek 等模型可能不支持 tool_choice: "required"（强制使用 function calling），
+    // 导致 LLM 只返回一个 tool call 而非多个。
+    // JSON 模式可以确保 LLM 返回完整的 JSON 计划，包含所有步骤。
+    console.log(`[SuiIntent] Available tools: ${suiTools.map(t => t.name).join(', ')}`);
     const plan = await engine.planQuery(intent, {
-      systemPrompt: `你是一个 Sui 区块链 DeFi 助手，负责将用户的自然语言意图解析为结构化的执行计划。
-
-可用的 DeFi 工具：
-${suiTools.map(t => `- ${t.name}: ${t.description?.split('\n')[0] || ''}`).join('\n')}
-
-规则：
-1. 分析用户意图，选择合适的工具组合
-2. 从用户描述中提取参数（代币类型、金额、地址等）
-3. 如果有依赖关系，正确设置 dependsOn
-4. 如果用户没有指定具体金额，使用 "auto" 表示自动计算
-5. 代币类型使用完整格式（如 "0x2::sui::SUI"）
-6. 返回结构化的 JSON 计划
-
-示例：
-用户说："在 Cetus 上卖出 0.1 SUI 买入 USDC，然后在 Navi 上存入 USDC"
-→ 步骤1: cetus_swap (卖出 SUI 换 USDC)
-→ 步骤2: navi_deposit (存入 USDC，依赖步骤1)
-
-用户说："在 Cetus 上卖出 SUI 买入 USDC，然后将收益转入 0x123..."
-→ 步骤1: cetus_swap (卖出 SUI 换 USDC)
-→ 步骤2: sui_transfer (将 USDC 转入目标地址，依赖步骤1)`,
+      useJsonMode: true,
+      language: language === 'zh' ? 'zh' : 'en',
+      network: resolvedNetwork,
     });
 
     console.log(`[SuiIntent] Plan generated: ${plan.steps.length} steps`);
+    if (plan.steps.length > 0) {
+      console.log(`[SuiIntent] Plan details: ${JSON.stringify(plan.steps.map(s => ({ toolName: s.toolName, args: s.arguments })))}`);
+    }
 
     sendJson(res, 200, {
       success: true,
@@ -182,10 +178,14 @@ async function handleBuildTransaction(res: http.ServerResponse, body: string): P
     }
 
     // 将前端传来的 plan steps（toolName 格式）转换为 CrossProtocolOrchestrator 能理解的格式
+    console.log(`[SuiIntent] Building transaction for ${plan.steps.length} steps`);
     const crossProtocolSteps = plan.steps.map((step: any) => {
       const { protocol, action } = parseToolName(step.toolName);
       // 标准化参数名：LLM 可能返回不同风格的参数名（如 coinIn/coinOut 或 coinTypeIn/coinTypeOut）
       const normalizedArgs = normalizeStepArguments(protocol, action, step.arguments || {});
+      console.log(`[SuiIntent] Step ${step.id}: ${step.toolName} -> protocol=${protocol}, action=${action}`);
+      console.log(`[SuiIntent] Original args: ${JSON.stringify(step.arguments)}`);
+      console.log(`[SuiIntent] Normalized args: ${JSON.stringify(normalizedArgs)}`);
       return {
         id: step.id || `step_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         protocol,
@@ -219,12 +219,22 @@ async function handleBuildTransaction(res: http.ServerResponse, body: string): P
     // 构建 PTB 交易
     const tx = await orchestrator.buildPlanTransaction(crossProtocolPlan, signerAddress);
 
-    // 使用 SuiClient 构建真实的 txBytes
-    const { SuiClient } = await import('@mysten/sui/client');
+    // 验证交易是否包含指令，避免发送空交易
+    // tx.getData().commands 是指令列表
+    const txData = (tx as any).getData?.();
+    const commands = txData?.commands || [];
+    if (!txData || commands.length === 0) {
+      console.error(`[SuiIntent] Transaction has no commands. txData:`, txData);
+      console.error(`[SuiIntent] Plan steps:`, JSON.stringify(crossProtocolPlan.steps.map((s: any) => ({ id: s.id, protocol: s.protocol, action: s.action, params: s.params }))));
+      throw new Error('交易不包含任何有效指令。请确认您的意图是否被解析为正确的执行步骤。');
+    }
+
+    // 使用 SuiJsonRpcClient 构建真实的 txBytes
+    const { SuiJsonRpcClient } = await import('@mysten/sui/jsonRpc');
     const rpcUrl = resolvedNetwork === 'mainnet'
       ? 'https://fullnode.mainnet.sui.io:443'
       : 'https://fullnode.testnet.sui.io:443';
-    const suiClient = new SuiClient({ url: rpcUrl });
+    const suiClient = new SuiJsonRpcClient({ url: rpcUrl, network: resolvedNetwork });
 
     // 构建交易字节（使用 SuiClient 确保 object version/digest 被正确填充）
     // 使用 onlyTransactionKind=true 让 gasData.payment 保持为 null，
@@ -272,9 +282,38 @@ function parseToolName(toolName: string): { protocol: string; action: string } {
 }
 
 /**
+ * 已知的 coin type 简写到完整格式的映射
+ * 用于将 LLM 返回的简写（如 "USDC"）转换为链上完整格式
+ */
+const KNOWN_COIN_TYPES: Record<string, string> = {
+  'SUI': '0x2::sui::SUI',
+  'USDC': '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
+  'wUSDC': '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
+  'CETUS': '0x6864a6f921804c9303007969a1b161f0e34f0e2a3f1e7e0b1c2d3e4f5a6b7c8d::cetus::CETUS',
+};
+
+/**
+ * 将简写 coin type 转换为完整格式
+ * 如果已经是完整格式（包含 ::），则原样返回
+ */
+function resolveCoinType(coinType: string): string {
+  if (!coinType) return coinType;
+  // 如果已经是完整格式（包含 ::），直接返回
+  if (coinType.includes('::')) return coinType;
+  // 查找已知映射
+  const upper = coinType.toUpperCase();
+  if (KNOWN_COIN_TYPES[upper]) return KNOWN_COIN_TYPES[upper];
+  // 未知简写，原样返回
+  return coinType;
+}
+
+/**
  * 标准化步骤参数名
  *
  * LLM 可能返回不同风格的参数名，需要映射为适配器期望的标准参数名。
+ * 同时将简写 coin type（如 "USDC"）转换为完整格式。
+ * 过滤掉 LLM 可能错误添加的额外参数（如 network）。
+ *
  * 例如：
  * - coinIn / inputCoin / from → coinTypeIn
  * - coinOut / outputCoin / to → coinTypeOut
@@ -286,6 +325,11 @@ function normalizeStepArguments(
   args: Record<string, any>,
 ): Record<string, any> {
   const normalized: Record<string, any> = { ...args };
+
+  // 过滤掉 LLM 可能错误添加的额外参数（这些参数不属于工具参数）
+  delete normalized.network;
+  delete normalized.networkType;
+  delete normalized.chain;
 
   // Cetus swap 参数名映射
   if (protocol === 'cetus' && action === 'swap') {
@@ -318,6 +362,9 @@ function normalizeStepArguments(
         normalized.inputAmount ||
         undefined;
     }
+    // 将简写 coin type 转换为完整格式
+    if (normalized.coinTypeIn) normalized.coinTypeIn = resolveCoinType(normalized.coinTypeIn);
+    if (normalized.coinTypeOut) normalized.coinTypeOut = resolveCoinType(normalized.coinTypeOut);
     // 清理别名，避免混淆
     delete normalized.coinIn;
     delete normalized.inputCoin;
@@ -355,6 +402,8 @@ function normalizeStepArguments(
         normalized.amountIn ||
         undefined;
     }
+    // 将简写 coin type 转换为完整格式
+    if (normalized.coinType) normalized.coinType = resolveCoinType(normalized.coinType);
     delete normalized.coin;
     delete normalized.token;
     delete normalized.asset;
@@ -384,6 +433,8 @@ function normalizeStepArguments(
         normalized.asset ||
         undefined;
     }
+    // 将简写 coin type 转换为完整格式
+    if (normalized.coinType) normalized.coinType = resolveCoinType(normalized.coinType);
     delete normalized.to;
     delete normalized.address;
     delete normalized.receiver;

@@ -44,3 +44,7 @@ export { getSuiMCPTools } from './sui-mcp-tools.js';
 // 网络配置
 export { getCetusConfig, getNaviConfig, getRpcUrl } from './network-config.js';
 export type { SuiNetwork, CetusContractConfig, NaviContractConfig, NetworkContracts } from './network-config.js';
+
+// Coin 类型解析器
+export { CoinTypeResolver } from './coin-type-resolver.js';
+export type { CoinInfo } from './coin-type-resolver.js';

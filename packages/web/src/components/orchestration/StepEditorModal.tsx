@@ -44,7 +44,7 @@ const StepEditorModal: React.FC<StepEditorModalProps> = ({ step, index, onSave, 
               {t('orchestration.editStep')} #{index + 1}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              {step.toolName || step.serverName || 'Unnamed Step'}
+              {step.toolName || step.serverName || t('stepEditor.unnamedStep')}
             </p>
           </div>
           <button
@@ -68,7 +68,7 @@ const StepEditorModal: React.FC<StepEditorModalProps> = ({ step, index, onSave, 
               value={editedStep.serverName || ''}
               onChange={(e) => setEditedStep(prev => ({ ...prev, serverName: e.target.value }))}
               className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              placeholder="e.g., my-mcp-server"
+              placeholder={t('stepEditor.serverPlaceholder')}
             />
           </div>
 
@@ -83,24 +83,24 @@ const StepEditorModal: React.FC<StepEditorModalProps> = ({ step, index, onSave, 
               value={editedStep.toolName || ''}
               onChange={(e) => setEditedStep(prev => ({ ...prev, toolName: e.target.value }))}
               className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              placeholder="e.g., get_weather"
+              placeholder={t('stepEditor.toolPlaceholder')}
             />
           </div>
 
           {/* Step Type */}
           <div>
             <label className="flex items-center text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              Type
+              {t('stepEditor.type')}
             </label>
             <select
               value={editedStep.type || 'tool'}
               onChange={(e) => setEditedStep(prev => ({ ...prev, type: e.target.value as WorkflowStep['type'] }))}
               className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             >
-              <option value="tool">Tool</option>
-              <option value="server">Server</option>
-              <option value="condition">Condition</option>
-              <option value="loop">Loop</option>
+              <option value="tool">{t('stepEditor.typeTool')}</option>
+              <option value="server">{t('stepEditor.typeServer')}</option>
+              <option value="condition">{t('stepEditor.typeCondition')}</option>
+              <option value="loop">{t('stepEditor.typeLoop')}</option>
             </select>
           </div>
 

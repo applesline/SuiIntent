@@ -392,7 +392,7 @@ const SuiTestnet: React.FC = () => {
                 {txDigest}
               </p>
               <a
-                href={`${EXPLORER_URL}/tx/${txDigest}`}
+                href={`${EXPLORER_URL}/txblock/${txDigest}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center space-x-1 mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"

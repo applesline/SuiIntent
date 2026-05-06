@@ -55,8 +55,8 @@ export { getSqliteDb, closeSqliteDb } from './utils/sqlite.js';
 export * from './types/index.js';
 export type { DaemonResponse } from './core/types.js';
 
-// ==================== CLI Tools ====================
-// Note: CLI modules are not directly exported, used via bin/intorch.js
+// Note: CLI package (@intentorch/cli) has been removed.
+// All CLI functionality is now available via the Web dashboard or direct API calls.
 
 /**
  * Get IntentOrch version info

@@ -376,6 +376,11 @@ export class LLMClient {
     // NEW: Support tools parameter for function calling
     if (options.tools && options.tools.length > 0) {
       requestBody.tools = options.tools;
+      // tool_choice: "required" forces the LLM to always use a tool call
+      // This is critical for multi-step operations where the LLM must generate
+      // one tool call per step (e.g., cetus_swap + navi_deposit).
+      // "auto" allows the LLM to choose between text and tool calls,
+      // which may cause it to skip steps.
       requestBody.tool_choice = options.toolChoice || "auto";
       // DeepSeek V4 Pro strict mode: force LLM to strictly follow tool schema
       if (options.toolChoice === "required") {

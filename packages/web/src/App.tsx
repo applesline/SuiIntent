@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import { LanguageProvider } from './contexts/LanguageContext';
 import Layout from './components/layout/Layout';
 import Orchestration from './pages/Orchestration';
@@ -18,6 +19,17 @@ function App() {
           </Route>
         </Routes>
       </Router>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            borderRadius: '8px',
+            background: '#333',
+            color: '#fff',
+          },
+        }}
+      />
       {isDevelopment && (
         <div className="fixed bottom-4 right-4 z-50">
           {/* ReactQueryDevtools removed for simplicity */}

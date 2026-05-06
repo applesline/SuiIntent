@@ -177,7 +177,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ onSendMessage, messages, isAn
         <div className="mt-2 flex items-center justify-center space-x-2 opacity-40">
           <Sparkles className="w-2.5 h-2.5 text-primary-500" />
           <p className="text-[10px] font-medium tracking-wider uppercase text-gray-500 dark:text-gray-400">
-            Powered by Intentorch Reasoning Engine
+            {t('orchestration.poweredBy')}
           </p>
         </div>
       </div>

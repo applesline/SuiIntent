@@ -225,7 +225,7 @@ export class DaemonServer {
   private async ensureToolsRegistered(serverNames: string[]): Promise<void> {
     try {
       console.log('[Daemon] Ensuring tools are registered for servers...');
-      const { getProcessManager, getToolRegistry, getRegistryClient, MCPClient } = await import('@intentorch/core');
+      const { getProcessManager, getToolRegistry, getRegistryClient } = await import('@intentorch/core');
       const processManager = getProcessManager();
       const toolRegistry = getToolRegistry();
       const registryClient = getRegistryClient();

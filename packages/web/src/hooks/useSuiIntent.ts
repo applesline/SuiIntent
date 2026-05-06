@@ -27,6 +27,7 @@ import { useState, useCallback, useEffect, useContext } from 'react';
 import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient, SuiClientContext } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromBase64 } from '@mysten/sui/utils';
+import { useLanguage } from '../contexts/LanguageContext';
 
 // ===== 类型定义 =====
 
@@ -99,6 +100,7 @@ export function useSuiIntent() {
   const currentAccount = useCurrentAccount();
   const suiClient = useSuiClient();
   const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
+  const { language } = useLanguage();
 
   const [isParsing, setIsParsing] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -139,7 +141,7 @@ export function useSuiIntent() {
         return null;
       }
 
-      // 调用 daemon API
+      // 调用 daemon API（传递当前语言设置和网络环境，让 LLM system prompt 使用对应语言和网络）
       const response = await fetch(`${DAEMON_BASE_URL}/api/sui/parse-intent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -148,6 +150,8 @@ export function useSuiIntent() {
           apiKey: aiConfig.apiKey,
           provider: aiConfig.provider,
           model: aiConfig.model,
+          language,
+          network,
         }),
       });
 
@@ -190,9 +194,11 @@ export function useSuiIntent() {
 
   /**
    * 调用 daemon API 构建 PTB 交易
+   * @param targetPlan - 要构建的计划（从外部传入，避免 React 状态异步更新问题）
    */
-  const buildTransactionViaDaemon = useCallback(async (): Promise<{ txBytes: Uint8Array; tx: Transaction }> => {
-    if (!plan) throw new Error('请先解析意图');
+  const buildTransactionViaDaemon = useCallback(async (targetPlan?: CrossProtocolPlan): Promise<{ txBytes: Uint8Array; tx: Transaction }> => {
+    const effectivePlan = targetPlan || plan;
+    if (!effectivePlan) throw new Error('请先解析意图');
 
     // 调用 daemon API /api/sui/build-transaction 构建真实 PTB
     const response = await fetch(`${DAEMON_BASE_URL}/api/sui/build-transaction`, {
@@ -200,9 +206,9 @@ export function useSuiIntent() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         plan: {
-          id: plan.id,
-          summary: plan.summary,
-          steps: plan.steps,
+          id: effectivePlan.id,
+          summary: effectivePlan.summary,
+          steps: effectivePlan.steps,
         },
         signerAddress: currentAccount?.address || '',
         network,
@@ -239,21 +245,23 @@ export function useSuiIntent() {
 
   /**
    * 模拟执行（Dry Run）- 通过 daemon API 构建真实 PTB 但不签名发送
+   * @param targetPlan - 要模拟执行的计划（从外部传入，避免 React 状态异步更新问题）
    */
-  const dryRunPlan = useCallback(async (): Promise<SuiIntentResult> => {
-    if (!plan || !currentAccount) {
+  const dryRunPlan = useCallback(async (targetPlan?: CrossProtocolPlan): Promise<SuiIntentResult> => {
+    const effectivePlan = targetPlan || plan;
+    if (!effectivePlan || !currentAccount) {
       return {
         success: false,
         stepResults: [],
-        error: !plan ? '请先解析意图' : '请先连接钱包',
+        error: !effectivePlan ? '请先解析意图' : '请先连接钱包',
       };
     }
 
     setIsExecuting(true);
 
     try {
-      // 通过 daemon API 构建真实 PTB
-      const { tx } = await buildTransactionViaDaemon();
+      // 通过 daemon API 构建真实 PTB（传入 effectivePlan，避免 React 状态异步更新问题）
+      const { tx } = await buildTransactionViaDaemon(effectivePlan);
 
       // 构建完整的 TransactionData 字节，因为 dryRunTransactionBlock 不接受 TransactionKind
       const fullTxBytes = await tx.build({ client: suiClient });
@@ -264,7 +272,7 @@ export function useSuiIntent() {
       });
 
       const status = dryRunResult.effects.status.status;
-      const stepResults: SuiIntentStepResult[] = plan.steps.map((step) => ({
+      const stepResults: SuiIntentStepResult[] = effectivePlan.steps.map((step) => ({
         stepId: step.id,
         toolName: step.toolName,
         success: status === 'success',
@@ -273,7 +281,7 @@ export function useSuiIntent() {
 
       const suiResult: SuiIntentResult = {
         success: status === 'success',
-        plan,
+        plan: effectivePlan,
         stepResults,
         isDryRun: true,
         error: status !== 'success' ? dryRunResult.effects.status.error : undefined,
@@ -284,7 +292,7 @@ export function useSuiIntent() {
     } catch (error: any) {
       const suiResult: SuiIntentResult = {
         success: false,
-        plan,
+        plan: effectivePlan,
         stepResults: [],
         error: `模拟执行失败: ${error.message}`,
         isDryRun: true,

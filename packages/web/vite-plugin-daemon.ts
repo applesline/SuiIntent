@@ -9,6 +9,7 @@
 import type { Plugin, ViteDevServer } from 'vite';
 
 let daemonServer: any = null;
+let isBuildComplete = false;
 
 export function daemonPlugin(): Plugin {
   return {
@@ -61,12 +62,20 @@ export function daemonPlugin(): Plugin {
     },
 
     /**
-     * Vite 服务器真正关闭时停止 Daemon
-     * 注意：使用 closeServer 而不是 closeBundle，
-     * 因为 closeBundle 在热重载时也会触发，会导致 daemon 被错误停止。
+     * 构建完成时标记，用于 closeBundle 判断
      */
-    async closeServer() {
-      if (daemonServer) {
+    async buildEnd() {
+      isBuildComplete = true;
+    },
+
+    /**
+     * Vite 服务器关闭时停止 Daemon
+     * 使用 isBuildComplete 标志区分真正的关闭和热重载：
+     * - 热重载时 buildEnd 不会触发，isBuildComplete 为 false，跳过
+     * - 服务器真正关闭时 buildEnd 已触发，isBuildComplete 为 true，执行停止
+     */
+    async closeBundle() {
+      if (daemonServer && isBuildComplete) {
         console.log('[daemon-plugin] Stopping DaemonServer...');
         try {
           await daemonServer.stop();
@@ -75,6 +84,7 @@ export function daemonPlugin(): Plugin {
           console.error('[daemon-plugin] Error stopping DaemonServer:', error);
         }
         daemonServer = null;
+        isBuildComplete = false;
       }
     },
   };

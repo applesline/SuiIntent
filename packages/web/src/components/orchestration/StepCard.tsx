@@ -11,6 +11,7 @@ import {
   FileText,
   Link2
 } from 'lucide-react';
+import { useLanguage } from '../../contexts/LanguageContext';
 import type { WorkflowStep } from '../../types';
 
 interface StepCardProps {
@@ -21,6 +22,7 @@ interface StepCardProps {
 }
 
 const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) => {
+  const { t } = useLanguage();
   // Show execution status if available
   const executionResult = (step.parameters as any)?._executionResult;
   const executionStatus = executionResult?.success === true ? 'success' : 
@@ -78,7 +80,7 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Step {index + 1}</span>
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('stepCard.stepNumber', { index: String(index + 1) })}</span>
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getBadgeColor()}`}>
                 {(step.type || 'tool').toUpperCase()}
               </span>
@@ -88,12 +90,12 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
                     ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                     : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                 }`}>
-                  {executionStatus === 'success' ? '✓ SUCCESS' : '✗ FAILED'}
+                  {executionStatus === 'success' ? t('stepCard.success') : t('stepCard.failed')}
                 </span>
               )}
             </div>
             <h3 className="font-semibold text-gray-900 dark:text-white">
-              {step.toolName || step.serverName || 'Unnamed Step'}
+              {step.toolName || step.serverName || t('stepCard.unnamedStep')}
             </h3>
             {/* Show description if available */}
             {description && (
@@ -131,7 +133,7 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
         {step.serverName && (
           <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
             <Server className="w-3.5 h-3.5 mr-1.5 text-blue-500 flex-shrink-0" />
-            <span className="font-medium mr-1.5">Server:</span>
+            <span className="font-medium mr-1.5">{t('stepCard.server')}</span>
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
               {step.serverName}
             </span>
@@ -142,7 +144,7 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
         {step.toolName && (
           <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
             <Wrench className="w-3.5 h-3.5 mr-1.5 text-green-500 flex-shrink-0" />
-            <span className="font-medium mr-1.5">Tool:</span>
+            <span className="font-medium mr-1.5">{t('stepCard.tool')}</span>
             <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">{step.toolName}</code>
           </div>
         )}
@@ -152,7 +154,7 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
           <div className="space-y-1">
             <div className="flex items-center text-sm font-medium text-gray-700 dark:text-gray-300">
               <FileText className="w-3.5 h-3.5 mr-1.5 text-gray-400" />
-              Parameters:
+              {t('stepCard.parameters')}
             </div>
             <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-2 text-xs font-mono text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700">
               <table className="w-full table-fixed">
@@ -175,7 +177,7 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
         {/* Execution error */}
         {executionError && (
           <div className="flex items-start text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg p-2">
-            <span className="font-medium mr-1">Error:</span>
+            <span className="font-medium mr-1">{t('stepCard.error')}</span>
             <span>{executionError}</span>
           </div>
         )}
@@ -186,7 +188,7 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
         <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
           <div className="flex items-center text-xs text-gray-500">
             <Link2 className="w-3 h-3 mr-1" />
-            <span className="font-medium mr-1">Depends on:</span>
+            <span className="font-medium mr-1">{t('stepCard.dependsOn')}</span>
             {(step as any).dependsOn.map((dep: string, i: number) => (
               <span key={dep} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 border border-amber-200 dark:border-amber-800 ml-1">
                 {dep}
@@ -200,7 +202,7 @@ const StepCard: React.FC<StepCardProps> = ({ step, index, onDelete, onEdit }) =>
       {(step as any).nextSteps && (step as any).nextSteps.length > 0 && (
         <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-center text-xs text-gray-500">
           <ChevronRight className="w-3 h-3 mr-1" />
-          Next: {(step as any).nextSteps.join(', ')}
+          {t('stepCard.next')} {(step as any).nextSteps.join(', ')}
         </div>
       )}
     </div>
