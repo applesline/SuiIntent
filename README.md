@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="./packages/web/public/logo.jpg" width="200" alt="IntentOrch Logo" />
+  <img src="./packages/web/public/logo.jpg" width="200" alt="SuiIntent Logo" />
 </p>
 
-<h1 align="center">IntentOrch</h1>
+<h1 align="center">SuiIntent</h1>
 <p align="center">
-  <strong>意图驱动的 MCP 编排引擎 — 用自然语言，驱动一切</strong>
+  <strong>自然语言驱动的 Sui DeFi 跨协议意图编排引擎</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/mcpilotx/intentorch/blob/main/LICENSE">
+  <a href="https://github.com/applesline/SuiIntent/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" />
   </a>
   <a href="https://nodejs.org">
@@ -17,8 +17,8 @@
   <a href="https://pnpm.io">
     <img src="https://img.shields.io/badge/package%20manager-pnpm-orange" alt="Package Manager" />
   </a>
-  <a href="https://github.com/mcpilotx/intentorch/issues">
-    <img src="https://img.shields.io/github/issues/mcpilotx/intentorch" alt="Issues" />
+  <a href="https://github.com/applesline/SuiIntent/issues">
+    <img src="https://img.shields.io/github/issues/applesline/SuiIntent" alt="Issues" />
   </a>
 </p>
 
@@ -26,172 +26,173 @@
   <b>中文</b> | <a href="README.en.md">English</a>
 </p>
 
-<!-- Dashboard 全景截图 -->
-<p align="center">
-  <img src="./docs/screenshots/1.png" width="800" alt="IntentOrch Dashboard - 系统状态总览" />
-</p>
-
 ---
 
 ## 🌟 一句话介绍
 
-**IntentOrch** 是 MCP（Model Context Protocol）生态的**意图驱动编排引擎**。你只需用自然语言描述需求，它就能自动理解意图、匹配工具、编排工作流并执行。
+**SuiIntent** 是 Sui 区块链上的**跨协议 DeFi 意图编排引擎**。你只需用自然语言描述 DeFi 操作需求，它就能自动理解意图、编排跨协议操作、构建 PTB（Programmable Transaction Block），并通过浏览器钱包一键签名执行。
 
-> 💡 **核心理念**：从"告诉计算机怎么做"到"告诉计算机你想要什么"
+> 💡 **核心理念**：从"手动构建多笔交易"到"用一句话完成跨协议 DeFi 操作"
 
 ---
 
-## 🎯 为什么需要 IntentOrch？
+## 🎯 为什么需要 SuiIntent？
 
-MCP 生态正在爆发，已有上千个 MCP Server 可供使用。但开发者面临三大痛点：
+Sui 生态拥有 Cetus（DEX）、Navi（借贷）、Aftermath、Turbos 等众多 DeFi 协议，但用户在进行跨协议操作时面临三大痛点：
 
-| 痛点 | 传统方式 | IntentOrch 的方式 |
+| 痛点 | 传统方式 | SuiIntent 的方式 |
 |------|---------|-----------------|
-| **发现难** | 需要手动搜索、阅读文档 | 自然语言描述需求，AI 自动匹配最佳工具 |
-| **编排难** | 需要编写代码串联多个工具 | 一句话生成完整工作流，自动处理依赖 |
-| **管理难** | 每个 Server 需要单独启动、监控 | 统一生命周期管理，Web 控制台可视化操作 |
+| **操作复杂** | 需要分别打开多个 DApp，手动构建多笔交易 | 一句话描述需求，自动编排跨协议操作 |
+| **Gas 浪费** | 每步操作需要单独签名，多次 Gas 费 | 利用 Sui PTB 将多步操作合并为单笔交易，一次签名，一次 Gas |
+| **门槛高** | 需要理解每个协议的合约地址、参数格式 | 自然语言输入，AI 自动解析参数，钱包一键签名 |
 
-**IntentOrch 让 MCP 从"开发者工具"变成"每个人的助手"。**
+**SuiIntent 让 Sui DeFi 从"专家工具"变成"每个人的助手"。**
 
 ---
 
 ## ✨ 核心特性
 
-### 🧠 意图驱动编排 — 核心中的核心
+### 🧠 自然语言 → 跨协议 PTB
 
 ```
-你输入： "帮我查一下明天从广州到长沙的高铁票"
+你输入： "在 Cetus 上卖出 0.1 SUI 买入 USDC，然后在 Navi 上存入 USDC"
 
-IntentOrch 自动完成：
-┌─────────────────────────────────────────────────────┐
-│ ① 意图解析                                          │
-│    └─ 识别需求：查询火车票                           │
-│    └─ 提取参数：明天、广州→长沙、高铁                │
-│                                                     │
-│ ② 工具匹配                                          │
-│    └─ 找到 12306-mcp → get-tickets 工具             │
-│    └─ 参数映射：广州→GZQ, 长沙→CSQ, 高铁→G         │
-│                                                     │
-│ ③ 工作流编排                                        │
-│    └─ 生成可执行的工作流（1个步骤）                  │
-│    └─ 自动处理依赖关系                               │
-│                                                     │
-│ ④ 自动执行                                          │
-│    └─ 启动 MCP Server → 调用工具 → 返回结果         │
-└─────────────────────────────────────────────────────┘
+SuiIntent 自动完成：
+┌─────────────────────────────────────────────────────────────┐
+│ ① LLM 意图解析                                              │
+│    └─ 识别需求：Cetus Swap + Navi Deposit                   │
+│    └─ 提取参数：amount=0.1 SUI, coinIn=SUI, coinOut=USDC   │
+│                                                             │
+│ ② 跨协议编排                                                │
+│    └─ 步骤1: Cetus Swap (SUI → USDC)                       │
+│    └─ 步骤2: Navi Deposit (存入 USDC)                       │
+│    └─ 自动处理步骤间数据依赖（Swap 输出作为 Deposit 输入）   │
+│                                                             │
+│ ③ 构建 PTB                                                  │
+│    └─ 合并为单个 Programmable Transaction Block              │
+│    └─ 自动解析池子类型、查询 sqrtPrice、计算滑点             │
+│    └─ 处理 Coin 所有权（合并剩余 SUI 到 gas，转账输出）      │
+│                                                             │
+│ ④ 钱包签名执行                                              │
+│    └─ 浏览器钱包确认 → 一次签名 → 链上执行                  │
+│    └─ 原子性保证：要么全部成功，要么全部失败                 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**无需写代码，无需查文档，说人话就行。**
+**无需切换多个 DApp，无需手动构建交易，说人话就行。**
 
-<!-- 意图编排页面截图 -->
-<p align="center">
-  <img src="./docs/screenshots/2.png" width="800" alt="IntentOrch 意图编排界面 - 自然语言生成工作流" />
-</p>
+### 🔄 支持的 DeFi 协议
 
-### 🐳 MCP Server 全生命周期管理
+| 协议 | 类型 | 支持的操作 | 集成状态 |
+|------|------|-----------|---------|
+| **Cetus** | DEX (AMM) | Swap (代币兑换) | ✅ 真实合约调用 |
+| **Navi** | 借贷协议 | Deposit, Withdraw, Borrow, Repay | ✅ 真实合约调用 |
+| **Sui Native** | 区块链原生 | Transfer (转账) | ✅ 真实合约调用 |
 
-像 Docker 一样管理你的 MCP Server：
+### ⚡ PTB 多步编排 — 核心技术亮点
 
-| 命令 | 说明 | 类比 Docker |
-|------|------|------------|
-| `intorch pull` | 从注册表拉取 MCP Server | `docker pull` |
-| `intorch start` | 启动 MCP Server | `docker run` |
-| `intorch stop` | 停止 MCP Server | `docker stop` |
-| `intorch ps` | 查看运行中的 Server | `docker ps` |
-| `intorch logs` | 查看 Server 日志 | `docker logs` |
+利用 Sui 的 **Programmable Transaction Block (PTB)** 原子性，将多步跨协议操作合并为单笔交易：
 
-支持 **GitHub**、**Gitee** 等多源注册表，一键拉取社区贡献的 MCP Server。
+- **原子执行**：所有操作要么全部成功，要么全部失败
+- **一次签名**：用户只需在钱包确认一次
+- **一次 Gas**：合并后的交易只需支付一次 Gas 费
+- **步骤间数据传递**：自动处理前一步骤的输出作为下一步骤的输入
 
-### 🖥️ 可视化 Web 管理控制台
+**典型跨协议场景：**
+```
+"在 Cetus 上卖出 SUI 买入 USDC，然后在 Navi 上存入 USDC，最后将收益转入 0x..."
+→ 合并为 1 笔 PTB 交易
+→ 1 次签名
+→ 1 次 Gas 费
+```
+
+### 🖥️ Web 管理控制台
 
 | 页面 | 功能 |
 |------|------|
-| **📊 仪表板** | 系统状态总览，Server 运行状况一目了然 |
-| **💬 意图编排** | AI 聊天式交互，自然语言 → 自动化工作流 |
-| **📦 MCP 服务** | 拉取、启动、停止、监控 MCP Server |
+| **💬 意图编排** | AI 聊天式交互，自然语言 → 跨协议 PTB |
 | **📋 工作流** | 查看、编辑、执行已保存的工作流 |
-| **🔧 进程监控** | 实时查看进程资源占用和运行状态 |
-| **⚙️ 配置管理** | AI 提供商和注册表配置 |
-| **🔑 密钥管理** | 安全存储 API Key 等敏感信息 |
-| **📝 日志查看** | 集中查看系统、Server、工作流日志 |
+| **🧪 测试网验证** | 在 Sui Testnet 上验证跨协议操作 |
 
-<!-- 功能截图拼图 -->
-<p align="center">
-  <img src="./docs/screenshots/3.png" width="45%" alt="工作流管理" />
-  <img src="./docs/screenshots/4.png" width="45%" alt="MCP服务管理" />
-</p>
-<p align="center">
-  <em>左：工作流管理 ｜ 右：MCP服务管理</em>
-</p>
+### 🔐 钱包驱动架构
 
-### 🔧 CLI + Daemon + Web 三端一体
-
-```bash
-# 命令行快速操作
-intorch pull github:Joooook/12306-mcp
-intorch start 12306-mcp
-intorch ps
-
-# 启动 Web 控制台
-intorch daemon start
-intorch dashboard
-
-# 工作流管理
-intorch workflow list
-intorch workflow run <id>
-```
+- 使用 `@mysten/dapp-kit` 集成 Sui 浏览器钱包
+- 私钥永不离开钱包扩展
+- 所有交易需用户在钱包中手动确认
+- 支持 mainnet 和 testnet 一键切换
 
 ---
 
 ## 🏗️ 架构设计
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    用户交互层                            │
-│  ┌──────────┐    ┌──────────┐    ┌──────────────────┐   │
-│  │   CLI    │    │  Daemon  │    │  Web Dashboard   │   │
-│  │  命令行  │    │  守护进程 │    │  可视化控制台    │   │
-│  └────┬─────┘    └────┬─────┘    └────────┬─────────┘   │
-└───────┼───────────────┼───────────────────┼──────────────┘
-        │               │                   │
-┌───────┴───────────────┴───────────────────┴──────────────┐
-│                     核心引擎层                            │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │          意图驱动编排引擎 (Intent Engine)           │  │
-│  │                                                    │  │
-│  │  自然语言 → 意图解析 → 工具匹配 → 工作流编排 → 执行 │  │
-│  └────────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ Workflow     │  │ Process      │  │ Runtime       │  │
-│  │ Engine       │  │ Manager      │  │ Adapter       │  │
-│  │ 工作流引擎    │  │ 进程管理      │  │ 运行时适配    │  │
-│  └──────────────┘  └──────────────┘  └───────────────┘  │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ Tool         │  │ Secret       │  │ Config        │  │
-│  │ Registry     │  │ Manager      │  │ Manager       │  │
-│  │ 工具注册表    │  │ 密钥管理     │  │ 配置管理      │  │
-│  └──────────────┘  └──────────────┘  └───────────────┘  │
-└──────────────────────────────────────────────────────────┘
-        │                    │
-┌───────┴────────────────────┴─────────────────────────────┐
-│                     MCP 生态层                            │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐   │
-│  │ 12306    │  │ File     │  │ 1000+ MCP            │   │
-│  │ MCP      │  │ System   │  │ Servers...           │   │
-│  └──────────┘  └──────────┘  └──────────────────────┘   │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      用户交互层                               │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              Web Dashboard (React + Vite)             │   │
+│  │  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐  │   │
+│  │  │ 意图编排页面  │  │ 工作流管理    │  │ 测试网验证   │  │   │
+│  │  └──────┬──────┘  └──────────────┘  └─────────────┘  │   │
+│  │         │                                              │   │
+│  │  ┌──────┴──────┐                                       │   │
+│  │  │ @mysten/    │                                       │   │
+│  │  │ dapp-kit    │  ← 钱包连接与签名                      │   │
+│  │  └─────────────┘                                       │   │
+│  └──────────────────────────────────────────────────────────┘
+│         │
+│         │ HTTP API (apiKey 用完即弃)
+│         ▼
+│  ┌──────────────────────────────────────────────────────────┐
+│  │                    Daemon 服务层                          │
+│  │  ┌────────────────────────────────────────────────────┐  │
+│  │  │      CloudIntentEngine (LLM 意图解析引擎)           │  │
+│  │  │  ┌──────────┐  ┌──────────┐  ┌────────────────┐   │  │
+│  │  │  │ Sui MCP  │  │ 意图解析  │  │ 参数提取与映射  │   │  │
+│  │  │  │ Tools    │  │          │  │                │   │  │
+│  │  │  └──────────┘  └──────────┘  └────────────────┘   │  │
+│  │  └────────────────────────────────────────────────────┘  │
+│  └──────────────────────────────────────────────────────────┘
+│         │
+│         ▼
+│  ┌──────────────────────────────────────────────────────────┐
+│  │                   核心引擎层                               │
+│  │                                                          │
+│  │  ┌────────────────────────────────────────────────────┐  │
+│  │  │      CrossProtocolOrchestrator (跨协议编排器)       │  │
+│  │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────┐  │  │
+│  │  │  │ CetusAdapter │  │ NaviAdapter  │  │SuiAdapter│  │  │
+│  │  │  │ (Swap)       │  │(Dep/Borrow)  │  │(Transfer)│  │  │
+│  │  │  └──────┬───────┘  └──────┬───────┘  └────┬─────┘  │  │
+│  │  │         │                  │                │        │  │
+│  │  │         └──────────────────┴────────────────┘        │  │
+│  │  │                    │                                  │  │
+│  │  │         Transaction (PTB) ← 所有适配器追加指令       │  │
+│  │  └────────────────────────────────────────────────────┘  │
+│  │                                                          │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │  │ CoinType     │  │ Network      │  │ PTB Builder   │  │
+│  │  │ Resolver     │  │ Config       │  │ (Gas 估算)    │  │
+│  │  └──────────────┘  └──────────────┘  └───────────────┘  │
+│  └──────────────────────────────────────────────────────────┘
+│         │
+│         ▼
+│  ┌──────────────────────────────────────────────────────────┐
+│  │                    Sui 区块链层                            │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐   │
+│  │  │ Cetus    │  │ Navi     │  │ Sui Native           │   │
+│  │  │ DEX      │  │ Protocol │  │ (Transfer, etc.)     │   │
+│  │  └──────────┘  └──────────┘  └──────────────────────┘   │
+│  └──────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### 核心模块
 
 | 模块 | 说明 |
 |------|------|
-| **@intentorch/core** | 核心业务逻辑：意图解析、工作流引擎、MCP 客户端、进程管理 |
-| **@intentorch/cli** | 命令行工具：Server 管理、工作流管理、守护进程控制 |
-| **@intentorch/web** | Web 管理控制台：React + TypeScript + Tailwind CSS |
+| **@intentorch/core** | 核心业务逻辑：跨协议编排器、协议适配器、PTB 构建、Coin 类型解析 |
+| **@sui-intent/sui-mcp-server** | Sui DeFi MCP Server：将编排能力封装为 MCP 工具 |
+| **@intentorch/web** | Web 管理控制台：React + TypeScript + Tailwind CSS + @mysten/dapp-kit |
 
 ---
 
@@ -200,12 +201,13 @@ intorch workflow run <id>
 ### 前置要求
 - Node.js >= 18.0.0
 - pnpm >= 8.0.0
+- Sui 浏览器钱包（如 [Sui Wallet](https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbobppdil)）
 
 ### 安装
 ```bash
 # 克隆仓库
-git clone https://github.com/mcpilotx/intentorch.git
-cd intentorch
+git clone https://github.com/applesline/SuiIntent.git
+cd SuiIntent
 
 # 安装依赖
 pnpm install
@@ -216,85 +218,93 @@ pnpm build
 
 ### 启动
 ```bash
-# 启动守护进程
-intorch daemon start
+# 方式一：一键启动（推荐）
+# Vite 开发服务器会自动内嵌启动 DaemonServer（端口 9658）
+pnpm --filter @intentorch/web dev
 
-# 启动 Web 控制台
-intorch dashboard
+# 方式二：分别启动（调试用）
+# 先启动守护进程（提供 LLM 意图解析和 PTB 构建 API）
+node packages/core/start_daemon.mjs
+
+# 再启动 Web 控制台（新开终端）
+pnpm --filter @intentorch/web dev
 
 # 打开浏览器访问 http://localhost:5173
 ```
 
 ### 完整使用流程
 ```bash
-# 1. 从 GitHub 拉取 12306 查票 MCP Server
-intorch pull github:Joooook/12306-mcp
-
-# 2. 启动 Server
-intorch start 12306-mcp
-
-# 3. 查看运行状态
-intorch ps
-
-# 4. 打开 Web 控制台，用自然语言编排工作流
-intorch dashboard
-# → 在编排页面输入："帮我查一下明天从广州到长沙的高铁票"
-# → AI 自动解析、匹配工具、生成工作流
-# → 一键执行，获取结果
+# 1. 打开 Web 控制台
+# 2. 点击右上角 "Connect Wallet" 连接 Sui 钱包
+# 3. 点击 ⚙️ 配置 AI 提供商和 API Key
+# 4. 在编排页面输入自然语言意图，例如：
+#    "在 Cetus 上卖出 0.1 SUI 买入 USDC，然后在 Navi 上存入 USDC"
+# 5. AI 自动解析 → 生成跨协议计划 → 模拟执行 (Dry Run)
+# 6. 确认后点击执行 → 钱包签名 → 链上执行
 ```
 
 ---
 
 ## 📸 场景示例
 
-### 场景一：一句话查火车票
+### 场景一：跨协议 Swap + Deposit
 ```
-你： "帮我查一下明天从广州到长沙的高铁票"
+你： "在 Cetus 上卖出 0.1 SUI 买入 USDC，然后在 Navi 上存入 USDC"
 
-IntentOrch：
-✅ 解析意图 → 查询火车票
-✅ 匹配工具 → 12306-mcp / get-tickets
-✅ 参数映射 → date=明天, from=广州, to=长沙, filter=高铁
-✅ 执行结果 → 返回 G 字头列车时刻表和余票信息
-```
-
-### 场景二：多步骤自动化
-```
-你： "每天早上8点检查服务器状态，如果 CPU 超过 80% 就发送告警"
-
-IntentOrch：
-✅ 解析为 3 个原子意图
-   ├─ 步骤1: 获取服务器 CPU 使用率
-   ├─ 步骤2: 判断是否超过阈值
-   └─ 步骤3: 发送告警通知
-✅ 自动编排依赖关系
-✅ 生成可定时执行的工作流
+SuiIntent：
+✅ LLM 解析意图 → Cetus Swap + Navi Deposit
+✅ 自动匹配工具 → cetus_swap + navi_deposit
+✅ 参数映射 → coinTypeIn=SUI, coinTypeOut=USDC, amount=100000000
+✅ 构建 PTB → 合并为单笔交易
+✅ 钱包签名 → 链上执行
+✅ 原子性保证 → 要么全部成功，要么全部失败
 ```
 
-### 场景三：组合多个 MCP Server
+### 场景二：跨协议 Swap + Transfer
 ```
-你： "搜索最新的 AI 新闻，总结要点，保存到本地文件"
+你： "在 Cetus 上卖出 SUI 买入 USDC，然后将 USDC 转入 0x..."
 
-IntentOrch：
-✅ 步骤1: search-web → 搜索 AI 新闻
-✅ 步骤2: ai-summarize → 总结要点
-✅ 步骤3: filesystem → 保存到本地
-✅ 自动处理步骤间的数据传递
+SuiIntent：
+✅ 步骤1: Cetus Swap (SUI → USDC)
+✅ 步骤2: Sui Transfer (USDC → 目标地址)
+✅ 自动处理步骤间数据依赖
+✅ 合并为单笔 PTB 交易
+```
+
+### 场景三：Navi 借贷操作
+```
+你： "在 Navi 上存入 10 SUI"
+
+SuiIntent：
+✅ 解析意图 → Navi Deposit
+✅ 参数提取 → coinType=SUI, amount=10000000000
+✅ 构建 PTB → 调用 Navi incentive_v3::entry_deposit
+✅ 钱包签名 → 链上执行
 ```
 
 ---
 
-## 🧩 生态兼容
+## 🧩 技术亮点
 
-IntentOrch 兼容所有遵循 [Model Context Protocol](https://modelcontextprotocol.io) 标准的 MCP Server：
+### 1. 真实链上合约调用
+- **Cetus Adapter**: 使用 `router::swap` 合约，自动解析池子类型、查询当前 sqrtPrice、计算滑点保护
+- **Navi Adapter**: 使用 `incentive_v3` 合约，支持 deposit/withdraw/borrow/repay，动态获取合约配置
+- **Sui Adapter**: 使用 `Transaction.transferObjects` 进行原生转账
 
-- 📊 **数据库** — PostgreSQL、MySQL、SQLite 查询
-- 📁 **文件系统** — 文件读写、目录操作
-- 🌐 **网络服务** — HTTP 请求、API 调用
-- 🚄 **交通出行** — 12306 查票、航班查询
-- 📰 **信息获取** — 新闻、天气、百科
-- 🛠️ **开发工具** — Git 操作、代码分析
-- ... 以及 **1000+** 社区贡献的 MCP Server
+### 2. 智能 PTB 构建
+- 自动处理 Coin 所有权（`splitCoins`、`coin::zero`、`MergeCoins`）
+- 步骤间数据依赖注入（前一步骤的输出作为下一步骤的输入）
+- 未使用的 Coin 自动转回用户地址（避免 `UnusedValueWithoutDrop` 错误）
+
+### 3. 动态 Coin 类型解析
+- 通过 Cetus `coin_list` 动态字段从链上获取代币列表
+- 支持代币简写（如 "USDC"）到完整链上地址的自动映射
+- 内置默认映射作为快速路径，后台异步刷新
+
+### 4. 钱包驱动安全架构
+- 私钥永不离开浏览器钱包
+- 所有交易需用户在钱包中手动确认
+- 支持 Dry Run 模拟执行，执行前预览资产变动
 
 ---
 
@@ -323,10 +333,9 @@ pnpm lint
 ---
 
 <p align="center">
-  <b>IntentOrch</b> — 从"告诉计算机怎么做"到"告诉计算机你想要什么"
+  <b>SuiIntent</b> — 从"手动构建多笔交易"到"用一句话完成跨协议 DeFi 操作"
 </p>
 <p align="center">
-  <a href="https://github.com/mcpilotx/intentorch">GitHub</a> •
-  <a href="https://gitee.com/mcpilotx/intentorch">Gitee</a> •
-  <a href="https://github.com/mcpilotx/intentorch/issues">Issues</a>
+  <a href="https://github.com/applesline/SuiIntent">GitHub</a> •
+  <a href="https://github.com/applesline/SuiIntent/issues">Issues</a>
 </p>
