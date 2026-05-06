@@ -29,6 +29,8 @@ export interface WorkflowStep {
   serverName?: string; // Made optional to support serverId
   serverId?: string; // Added to support older format
   toolName: string;
+  description?: string; // Human-readable description of the step
+  dependsOn?: string[]; // IDs of steps this step depends on
   parameters: Record<string, any>;
   if?: string; // Condition expression, e.g., "{{analysis.score > 5}}"
   retry?: {

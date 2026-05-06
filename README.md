@@ -308,23 +308,6 @@ SuiIntent：
 
 ---
 
-## 🤝 贡献指南
-
-我们欢迎所有形式的贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详情。
-
-### 开发
-```bash
-# 启动开发模式
-pnpm dev
-
-# 运行测试
-pnpm test
-
-# 代码检查
-pnpm lint
-```
-
----
 
 ## 📄 许可证
 
