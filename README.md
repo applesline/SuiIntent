@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <b>中文</b>
+  <b>English</b> | <a href="README_zh.md">中文</a>
 </p>
 
 ---
@@ -58,25 +58,25 @@ The Sui ecosystem features numerous DeFi protocols including Cetus (DEX), Navi (
 You input: "Swap 0.1 SUI for USDC on Cetus, then deposit USDC on Navi"
 
 SuiIntent automatically completes:
-┌─────────────────────────────────────────────────────────────┐
-│ ① LLM Intent Parsing                                        │
-│    └─ Identify needs: Cetus Swap + Navi Deposit             │
-│    └─ Extract params: amount=0.1 SUI, coinIn=SUI, coinOut=USDC │
-│                                                             │
-│ ② Cross-Protocol Orchestration                              │
-│    └─ Step 1: Cetus Swap (SUI → USDC)                      │
-│    └─ Step 2: Navi Deposit (deposit USDC)                   │
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ ① LLM Intent Parsing                                                          │
+│    └─ Identify needs: Cetus Swap + Navi Deposit                               │
+│    └─ Extract params: amount=0.1 SUI, coinIn=SUI, coinOut=USDC                │
+│                                                                               │
+│ ② Cross-Protocol Orchestration                                                │
+│    └─ Step 1: Cetus Swap (SUI → USDC)                                         │
+│    └─ Step 2: Navi Deposit (deposit USDC)                                     │
 │    └─ Auto-handle inter-step data dependencies (Swap output as Deposit input) │
-│                                                             │
-│ ③ PTB Construction                                          │
-│    └─ Merge into a single Programmable Transaction Block     │
-│    └─ Auto-resolve pool types, query sqrtPrice, calculate slippage │
-│    └─ Handle Coin ownership (merge remaining SUI to gas, transfer outputs) │
-│                                                             │
-| ④ Wallet Signature & Execution                              │
-│    └─ Browser wallet confirmation → one signature → on-chain execution │
-│    └─ Atomicity guarantee: all succeed or all fail           │
-└─────────────────────────────────────────────────────────────┘
+│                                                                               │
+│ ③ PTB Construction                                                            │
+│    └─ Merge into a single Programmable Transaction Block                      │
+│    └─ Auto-resolve pool types, query sqrtPrice, calculate slippage            │
+│    └─ Handle Coin ownership (merge remaining SUI to gas, transfer outputs)    │
+│                                                                               │
+| ④ Wallet Signature & Execution                                                │
+│    └─ Browser wallet confirmation → one signature → on-chain execution        │
+│    └─ Atomicity guarantee: all succeed or all fail                            │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **No need to switch between multiple DApps, no need to manually build transactions — just speak naturally.**
@@ -112,7 +112,6 @@ Leveraging Sui's **Programmable Transaction Block (PTB)** atomicity to merge mul
 |------|----------|
 | **💬 Intent Orchestration** | AI chat-style interaction, natural language → cross-protocol PTB |
 | **📋 Workflows** | View, edit, and execute saved workflows |
-| **🧪 Testnet Verification** | Verify cross-protocol operations on Sui Testnet |
 
 ### 🔐 Wallet-Driven Architecture
 
@@ -126,66 +125,66 @@ Leveraging Sui's **Programmable Transaction Block (PTB)** atomicity to merge mul
 ## 🏗️ Architecture Design
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    User Interaction Layer                      │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │              Web Dashboard (React + Vite)             │   │
-│  │  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐  │   │
-│  │  │ Intent      │  │ Workflow     │  │ Testnet     │  │   │
-│  │  │ Orchestration│  │ Management   │  │ Verification│  │   │
-│  │  └──────┬──────┘  └──────────────┘  └─────────────┘  │   │
-│  │         │                                              │   │
-│  │  ┌──────┴──────┐                                       │   │
-│  │  │ @mysten/    │                                       │   │
-│  │  │ dapp-kit    │  ← Wallet connection & signing        │   │
-│  │  └─────────────┘                                       │   │
-│  └──────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                    User Interaction Layer                  │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              Web Dashboard (React + Vite)           │   │
+│  │ ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │   │
+│  │ │ Intent       │  │ Workflow     │  │ Testnet     │ │   │
+│  │ │ Orchestration│  │ Management   │  │ Verification│ │   │
+│  │ └──────┬───────┘  └──────────────┘  └─────────────┘ │   │
+│  │         │                                           │   │
+│  │  ┌──────┴──────┐                                    │   │
+│  │  │ @mysten/    │                                    │   │
+│  │  │ dapp-kit    │  ← Wallet connection & signing     │   │
+│  │  └─────────────┘                                    │   │
+│  └─────────────────────────────────────────────────────────┘
 │         │
 │         │ HTTP API (apiKey used once)
 │         ▼
-│  ┌──────────────────────────────────────────────────────────┐
-│  │                    Daemon Service Layer                    │
-│  │  ┌────────────────────────────────────────────────────┐  │
-│  │  │      CloudIntentEngine (LLM Intent Parsing Engine)  │  │
+│  ┌─────────────────────────────────────────────────────────┐
+│  │                    Daemon Service Layer                 │
+│  │  ┌───────────────────────────────────────────────────┐  │
+│  │  │    CloudIntentEngine (LLM Intent Parsing Engine)  │  │
 │  │  │  ┌──────────┐  ┌──────────┐  ┌────────────────┐   │  │
 │  │  │  │ Sui MCP  │  │ Intent   │  │ Parameter      │   │  │
 │  │  │  │ Tools    │  │ Parsing  │  │ Extraction &   │   │  │
 │  │  │  │          │  │          │  │ Mapping        │   │  │
 │  │  │  └──────────┘  └──────────┘  └────────────────┘   │  │
-│  │  └────────────────────────────────────────────────────┘  │
-│  └──────────────────────────────────────────────────────────┘
+│  │  └───────────────────────────────────────────────────┘  │
+│  └─────────────────────────────────────────────────────────┘
 │         │
 │         ▼
-│  ┌──────────────────────────────────────────────────────────┐
-│  │                    Core Engine Layer                       │
-│  │                                                          │
-│  │  ┌────────────────────────────────────────────────────┐  │
-│  │  │      CrossProtocolOrchestrator                      │  │
-│  │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────┐  │  │
-│  │  │  │ CetusAdapter │  │ NaviAdapter  │  │SuiAdapter│  │  │
-│  │  │  │ (Swap)       │  │(Dep/Borrow)  │  │(Transfer)│  │  │
-│  │  │  └──────┬───────┘  └──────┬───────┘  └────┬─────┘  │  │
-│  │  │         │                  │                │        │  │
-│  │  │         └──────────────────┴────────────────┘        │  │
-│  │  │                    │                                  │  │
-│  │  │         Transaction (PTB) ← All adapters append cmds │  │
-│  │  └────────────────────────────────────────────────────┘  │
-│  │                                                          │
+│  ┌─────────────────────────────────────────────────────────┐
+│  │                    Core Engine Layer                    │
+│  │                                                         │
+│  │  ┌───────────────────────────────────────────────────┐  │
+│  │  │      CrossProtocolOrchestrator                    │  │
+│  │  │  ┌─────────────┐  ┌──────────────┐  ┌──────────┐  │  │
+│  │  │  │ CetusAdapter│  │ NaviAdapter  │  │SuiAdapter│  │  │
+│  │  │  │ (Swap)      │  │(Dep/Borrow)  │  │(Transfer)│  │  │
+│  │  │  └──────┬──────┘  └──────┬───────┘  └────┬─────┘  │  │
+│  │  │         │                │               │        │  │
+│  │  │         └────────────────┴───────────────┘        │  │
+│  │  │                    │                              │  │
+│  │  │      Transaction (PTB) ← All adapters append cmds │  │
+│  │  └───────────────────────────────────────────────────┘  │
+│  │                                                         │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
 │  │  │ CoinType     │  │ Network      │  │ PTB Builder   │  │
 │  │  │ Resolver     │  │ Config       │  │ (Gas Estimate)│  │
 │  │  └──────────────┘  └──────────────┘  └───────────────┘  │
-│  └──────────────────────────────────────────────────────────┘
+│  └─────────────────────────────────────────────────────────┘
 │         │
 │         ▼
-│  ┌──────────────────────────────────────────────────────────┐
-│  │                    Sui Blockchain Layer                    │
+│  ┌─────────────────────────────────────────────────────────┐
+│  │                    Sui Blockchain Layer                 │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐   │
 │  │  │ Cetus    │  │ Navi     │  │ Sui Native           │   │
 │  │  │ DEX      │  │ Protocol │  │ (Transfer, etc.)     │   │
 │  │  └──────────┘  └──────────┘  └──────────────────────┘   │
-│  └──────────────────────────────────────────────────────────┘
-└─────────────────────────────────────────────────────────────┘
+│  └─────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### Core Modules
