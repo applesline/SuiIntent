@@ -561,8 +561,25 @@ const translations = {
     'suiIntent.stepUpdated': 'Step updated successfully',
     'suiIntent.unknownError': '未知错误',
     'suiIntent.defaultDescription': 'Sui DeFi 交易',
+
+    // AI Config Modal
+    'aiConfig.title': 'AI 配置',
+    'aiConfig.description': '配置 LLM 提供商和 API Key',
+    'aiConfig.provider': 'AI 提供商',
+    'aiConfig.model': '模型',
+    'aiConfig.apiKey': 'API Key',
+    'aiConfig.apiKeyPlaceholder': 'sk-...',
+    'aiConfig.apiKeyHint': 'API Key 仅存储在浏览器本地，不会上传到服务端',
+    'aiConfig.saveSuccess': '配置已保存',
+    'aiConfig.clearConfig': '清除配置',
+    'aiConfig.saveConfig': '保存配置',
+    'aiConfig.error.apiKeyRequired': '请输入 API Key',
+    'aiConfig.error.providerRequired': '请选择 AI 提供商',
+    'aiConfig.layoutButton': 'AI',
+    'aiConfig.layoutButtonTitle': '配置 AI 提供商和 API Key',
   },
   en: {
+
     // Common
     'app.name': 'Intentorch',
     'app.subtitle': 'MCP Server Management',
@@ -1122,6 +1139,22 @@ const translations = {
     'suiIntent.stepUpdated': 'Step updated successfully',
     'suiIntent.unknownError': 'Unknown error',
     'suiIntent.defaultDescription': 'Sui DeFi Transaction',
+
+    // AI Config Modal
+    'aiConfig.title': 'AI Configuration',
+    'aiConfig.description': 'Configure LLM provider and API Key',
+    'aiConfig.provider': 'AI Provider',
+    'aiConfig.model': 'Model',
+    'aiConfig.apiKey': 'API Key',
+    'aiConfig.apiKeyPlaceholder': 'sk-...',
+    'aiConfig.apiKeyHint': 'API Key is stored locally in your browser and never uploaded to the server',
+    'aiConfig.saveSuccess': 'Configuration saved',
+    'aiConfig.clearConfig': 'Clear Configuration',
+    'aiConfig.saveConfig': 'Save Configuration',
+    'aiConfig.error.apiKeyRequired': 'Please enter API Key',
+    'aiConfig.error.providerRequired': 'Please select an AI provider',
+    'aiConfig.layoutButton': 'AI',
+    'aiConfig.layoutButtonTitle': 'Configure AI provider and API Key',
   }
 };
 

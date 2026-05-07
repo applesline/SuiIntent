@@ -75,10 +75,10 @@ const Layout: React.FC = () => {
             <button
               onClick={() => setShowAIConfig(true)}
               className="flex items-center space-x-1.5 px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-primary-300 dark:hover:border-primary-600 transition-all text-xs"
-              title="配置 AI 提供商和 API Key"
+              title={t('aiConfig.layoutButtonTitle')}
             >
               <Settings className="w-3.5 h-3.5 text-gray-500" />
-              <span className="text-gray-600 dark:text-gray-300 font-medium">AI</span>
+              <span className="text-gray-600 dark:text-gray-300 font-medium">{t('aiConfig.layoutButton')}</span>
               {getAIConfig()?.apiKey ? (
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
               ) : (

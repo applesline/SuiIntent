@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Key, Save, Eye, EyeOff, Check, AlertCircle } from 'lucide-react';
 import { getAIConfig, saveAIConfig, clearAIConfig, type AIConfig } from '../../hooks/useSuiIntent';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 interface AIConfigModalProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ const PROVIDERS = [
 ];
 
 const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
+  const { t } = useLanguage();
   const [config, setConfig] = useState<AIConfig>({
     provider: 'deepseek',
     apiKey: '',
@@ -46,11 +48,11 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
 
   const handleSave = () => {
     if (!config.apiKey.trim()) {
-      setError('请输入 API Key');
+      setError(t('aiConfig.error.apiKeyRequired'));
       return;
     }
     if (!config.provider) {
-      setError('请选择 AI 提供商');
+      setError(t('aiConfig.error.providerRequired'));
       return;
     }
 
@@ -92,8 +94,8 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
               <Key className="w-5 h-5 text-primary-600 dark:text-primary-400" />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 dark:text-white">AI 配置</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">配置 LLM 提供商和 API Key</p>
+              <h3 className="font-bold text-gray-900 dark:text-white">{t('aiConfig.title')}</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('aiConfig.description')}</p>
             </div>
           </div>
           <button
@@ -109,7 +111,7 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
           {/* Provider */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              AI 提供商
+              {t('aiConfig.provider')}
             </label>
             <select
               value={config.provider}
@@ -127,7 +129,7 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
           {/* Model */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              模型
+              {t('aiConfig.model')}
             </label>
             <select
               value={config.model}
@@ -145,14 +147,14 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
           {/* API Key */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              API Key
+              {t('aiConfig.apiKey')}
             </label>
             <div className="relative">
               <input
                 type={showApiKey ? 'text' : 'password'}
                 value={config.apiKey}
                 onChange={(e) => setConfig({ ...config, apiKey: e.target.value })}
-                placeholder="sk-..."
+                placeholder={t('aiConfig.apiKeyPlaceholder')}
                 className="w-full px-3 py-2.5 pr-10 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
               />
               <button
@@ -164,7 +166,7 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
               </button>
             </div>
             <p className="mt-1.5 text-xs text-gray-400">
-              API Key 仅存储在浏览器本地，不会上传到服务端
+              {t('aiConfig.apiKeyHint')}
             </p>
           </div>
 
@@ -180,7 +182,7 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
           {saved && (
             <div className="flex items-center space-x-2 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
               <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
-              <span className="text-sm text-green-600 dark:text-green-400">配置已保存</span>
+              <span className="text-sm text-green-600 dark:text-green-400">{t('aiConfig.saveSuccess')}</span>
             </div>
           )}
         </div>
@@ -191,14 +193,14 @@ const AIConfigModal: React.FC<AIConfigModalProps> = ({ isOpen, onClose }) => {
             onClick={handleClear}
             className="px-4 py-2 text-sm text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"
           >
-            清除配置
+            {t('aiConfig.clearConfig')}
           </button>
           <button
             onClick={handleSave}
             className="flex items-center space-x-2 px-5 py-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 active:scale-95 transition-all shadow-md shadow-primary-500/20"
           >
             <Save className="w-4 h-4" />
-            <span className="text-sm font-medium">保存配置</span>
+            <span className="text-sm font-medium">{t('aiConfig.saveConfig')}</span>
           </button>
         </div>
       </div>
